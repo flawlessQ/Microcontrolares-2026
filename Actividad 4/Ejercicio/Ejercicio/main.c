@@ -6,10 +6,10 @@
  */ 
 
 /*
- Este ejercicio consiste en el diseño, desarrollo e implementación del firmware para un sistema de clasificación de objetos
+ Este ejercicio consiste en el diseï¿½o, desarrollo e implementaciï¿½n del firmware para un sistema de clasificaciï¿½n de objetos
   en una cinta transportadora, utilizando el microcontrolador de 8 bits ATMega328P. 
  El sistema es capaz de identificar dimensiones, gestionar el flujo de piezas
-  y permitir la supervisión remota mediante una interfaz gráfica de usuario (GUI).
+  y permitir la supervisiï¿½n remota mediante una interfaz grï¿½fica de usuario (GUI).
 */
 
 // __________________________________________________________________________________________________________________
@@ -17,31 +17,33 @@
 //|													INCLUDES			                                             |
 //|__________________________________________________________________________________________________________________|
 
-#include <avr/io.h>			// Esta librería incluye acceso a los registros del microcontrolador.
+#include <avr/io.h>			// Esta librerï¿½a incluye acceso a los registros del microcontrolador.
 
 #include <avr/interrupt.h>	/*	
-								Esta librería incluye:
+								Esta librerï¿½a incluye:
 								- Macros para habilitar y deshabilitar interrupciones.
-								- Definiciones para crear rutinas de interrupción.
+								- Definiciones para crear rutinas de interrupciï¿½n.
 								- Acceso al registro global de interrupciones.
 							*/
 
 #include <avr/pgmspace.h>	/* 
-							  Esta librería incluye el manejo de datos almacenados 
+							  Esta librerï¿½a incluye el manejo de datos almacenados 
 							  en la memoria FLASH (memoria de programa) en lugar de la RAM.
 							*/   
 
-#include <stdbool.h>		// Esta librería incluye utilizar operaciones booleanas.
+#include <stdbool.h>		// Esta librerï¿½a incluye utilizar operaciones booleanas.
 
-#include "TIMERS.h"			/* Esta librería incluye la inicialización de los timers:
+#include "TIMERS.h"			/* Esta librerï¿½a incluye la inicializaciï¿½n de los timers:
 								-TIMER0: configurado a 1ms.
 								-TIMER1: configurado a 1ms.
 								-TIMER2: configurado a 1us.
 							*/
 
-#include "COMUNICATION.h"	// Esta librería incluye el control de la comunicación USART, tanto para la recepción como para la transmisión.
+#include "COMUNICATION.h"	// Esta librerï¿½a incluye el control de la comunicaciï¿½n USART, tanto para la recepciï¿½n como para la transmisiï¿½n.
 
-#include "HCSR04.h"			// Esta librería incluye una interfaz de hardware del driver HC-SR04.
+#include "HCSR04.h"			// Esta librerï¿½a incluye una interfaz de hardware del driver HC-SR04.
+#include "IR.h"			// Esta libreria incluye el driver de los sensores infrarrojos TCRT5000.
+#include "CLASSIFIER.h"		// Esta libreria incluye la logica de clasificacion de cajas.
 
 #include "SERVO.h"			// Esta libreria incluye el driver de software PWM para los tres servomotores SG90.
 
@@ -51,19 +53,12 @@
 //|__________________________________________________________________________________________________________________|
 
 typedef enum{
-	CS_MEASURE,				// Estado que indica que se está midiendo una caja. 
+	CS_MEASURE,				// Estado que indica que se estï¿½ midiendo una caja. 
 	CS_PUSHER1,				// Estado que indica que hay una caja que debe ser empujado por el pateador 1.  
 	CS_PUSHER2,				// Estado que indica que hay una caja que debe ser empujado por el pateador 2.  
 	CS_PUSHER3, 			// Estado que indica que hay una caja que debe ser empujado por el pateador 3.  
 }_eConveyorState;
 
-typedef struct{
-	uint8_t h_small;	// Altura de la caja pequeña.
-	uint8_t h_medium;	// Altura de la caja mediana.
-	uint8_t h_big;		// Altura de la caja grande.
-	uint8_t w;			// Ancho de todas las cajas.
-	uint8_t t;			// Espesor de todas las cajas.
-}_sBoxs;
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
@@ -81,36 +76,39 @@ typedef struct{
 #define SERVO2 PINB4		  // Servomotor 2 en el PINB4.
 #define	SERVO1	PIND7	      // Servomotor 1 en el PIND7.
 
-#define	IR0	PIND2	          // IR 0 en el PIND2.
-#define	IR1	PIND3	          // IR 1 en el PIND3.
-#define	IR2	PIND4	          // IR 2 en el PIND4.
-#define	IR3	PIND5	          // IR 3 en el PIND5.
+
+#define BTN_SMALL   PIND6	  // Boton simulacion caja pequena  (Arduino D6).
+#define BTN_MEDIUM  PINB0	  // Boton simulacion caja mediana  (Arduino D8).
+
+#define BTN_SMALL_PRESSED   ((PIND) & (1 << BTN_SMALL))	// Activo alto (pull-down externo, boton conecta pin a 5V).
+#define BTN_MEDIUM_PRESSED  ((PINB) & (1 << BTN_MEDIUM))	// Activo alto (pull-down externo, boton conecta pin a 5V).
 
 #define TRUE 1				  // Defino el estado "TRUE" como 1.
 #define FALSE 0				  // Defino el estado "FALSE" como 0.
 
-#define REFERENCE_DIST_CM	20		  // Distancia de referencia (sensor al transportador sin caja). Ajustar segun la instalacion real.
 #define SERVO_HOLD_MS		500		  // Tiempo en ms que el servo permanece en posicion PUSH.
 
-#define IR_DETECTED(pin)	(!((PIND) & (1 << (pin))))	// TCRT5000: LOW = objeto detectado.
+#define MODE_NORMAL		0		  // Modo normal: servo espera deteccion IR del pateador.
+#define MODE_ESTIMATED	1		  // Modo estimado: servo dispara por timer fijo.
+#define EST_DELAY_MS	2000	  // Retardo estimado de transporte cinta (ms).
+
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
-//|                                   DECLARACIÓN DE FUNCIONES PROTOTÍPO                                             |
+//|                                   DECLARACIï¿½N DE FUNCIONES PROTOTï¿½PO                                             |
 //|__________________________________________________________________________________________________________________|
 
-void On1ms();							// Función que ejecuta eventos cada 1ms.
-void On1us();							// Función que ejecuta eventos cada 10us.
+void On1ms();							// Funciï¿½n que ejecuta eventos cada 1ms.
+void On1us();							// Funciï¿½n que ejecuta eventos cada 10us.
 
-void ini_GPIOs ();						// Función de inicialización de GPIOs.	
-void Heartbeat();						// Función de control del heartbeat.
+void ini_GPIOs ();						// Funciï¿½n de inicializaciï¿½n de GPIOs.	
+void Heartbeat();						// Funciï¿½n de control del heartbeat.
 
-void decodeCMD();						// Función que decodifica el comando recibido.
+void decodeCMD();						// Funciï¿½n que decodifica el comando recibido.
 
-uint8_t classify_box(uint8_t d_cm);			// Funcion que clasifica la caja segun la distancia medida.
 
-void HCSR04_TrigWrite(uint8_t level);	// Función que activa el sensor HCSR04 para las lecturas.
-uint8_t HCSR04_EchoRead();				// Función que lee los pulsos recibidos por el sensor HCSR04. 
+void HCSR04_TrigWrite(uint8_t level);	// Funciï¿½n que activa el sensor HCSR04 para las lecturas.
+uint8_t HCSR04_EchoRead();				// Funciï¿½n que lee los pulsos recibidos por el sensor HCSR04. 
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
@@ -119,18 +117,11 @@ uint8_t HCSR04_EchoRead();				// Función que lee los pulsos recibidos por el sen
 
 uint8_t time100ms = 100;	// Contador auxiliar que se utiliza para indicar cuando pasaron 10ms.
 
-_sRX srx;					// Variable que contendrá los datos para manejar la recepción.
-_sTX stx;					// Variable que contendrá los datos para manejar la transmisión.
+_sRX srx;					// Variable que contendrï¿½ los datos para manejar la recepciï¿½n.
+_sTX stx;					// Variable que contendrï¿½ los datos para manejar la transmisiï¿½n.
 		
-_eConveyorState state;		// Variable que contendrá los estados de la cinta transportadora.
+_eConveyorState state;		// Variable que contendrï¿½ los estados de la cinta transportadora.
 
-_sBoxs boxs = {
-	.h_small = 6,
-	.h_medium = 8,
-	.h_big = 10,
-	.w = 10,
-	.t = 3
-};
 
 _sHCSR04 sensor;
 
@@ -144,7 +135,10 @@ uint8_t d_cm;				// Distancia medida por el sensor.
 
 uint16_t servo_hold_timer = 0;	// Contador de tiempo para mantener el servo en posicion PUSH.
 uint8_t  servo_active     = FALSE;	// Bandera que indica si el servo esta activo.
-uint8_t  detected_type    = 0;	// Tipo de caja detectada: 1=small, 2=medium, 3=big.
+_eBoxType  detected_type  = BOX_NONE;	// Tipo de caja detectada por el clasificador.
+uint16_t box_count[4]    = {0, 0, 0, 0};	// Contadores de cajas eyectadas por tipo (_eBoxType).
+uint8_t  conv_mode       = MODE_NORMAL;		// Modo de operacion (0=Normal, 1=Estimado).
+uint16_t est_delay_timer = 0;				// Timer de espera en modo estimado (ms).
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
@@ -159,50 +153,57 @@ ISR(TIMER1_COMPA_vect)
 
 ISR(TIMER0_COMPA_vect)
 {
-// Vector interrupción Timer/Counter0 Compare Match A.
+// Vector interrupciï¿½n Timer/Counter0 Compare Match A.
 
-	OCR0A += 249;				// Programo la próxima interrupción 249 ticks después de la anterior.
-								// En vez de esperar otra vuelta del timer, se programa el próximo evento relativo al actual.
-	GPIOR0 |= (1 << GPIOR00);	// Activo la bandera "GPIOR00", que me indica cuando sucedió una interrupción.
+	OCR0A += 249;				// Programo la prï¿½xima interrupciï¿½n 249 ticks despuï¿½s de la anterior.
+								// En vez de esperar otra vuelta del timer, se programa el prï¿½ximo evento relativo al actual.
+	GPIOR0 |= (1 << GPIOR00);	// Activo la bandera "GPIOR00", que me indica cuando sucediï¿½ una interrupciï¿½n.
 
 }
 
 ISR(USART_RX_vect)
 {
-// Vector interrupción USART Rx Complete.	
+// Vector interrupciï¿½n USART Rx Complete.	
 
-	srx.rBuf.buf[srx.rBuf.iw++] = UDR0;	// Lee el byte recibido de "UDR0". Lo guarda en el buffer RX en la posición "iw". Luego incrementa "iw".
-	srx.rBuf.iw &= (srx.rBuf.size-1);	// Si buf size = 2^n. size - 1 = 127. Aplicar & 127 hace que el índice quede entre 0 y 127.
+	srx.rBuf.buf[srx.rBuf.iw++] = UDR0;	// Lee el byte recibido de "UDR0". Lo guarda en el buffer RX en la posiciï¿½n "iw". Luego incrementa "iw".
+	srx.rBuf.iw &= (srx.rBuf.size-1);	// Si buf size = 2^n. size - 1 = 127. Aplicar & 127 hace que el ï¿½ndice quede entre 0 y 127.
 	
 }
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
-//|                                   CÓDIGO DE FUNCIONES PROTOTÍPO		                                             |
+//|                                   Cï¿½DIGO DE FUNCIONES PROTOTï¿½PO		                                             |
 //|__________________________________________________________________________________________________________________|
 
 void ini_GPIOs ()
 {
-// En esta función se inicializan los puertos de entrada y salida.
+// En esta funciï¿½n se inicializan los puertos de entrada y salida.
 
 	DDRB |= (1 << LEDBUILTIN);										// Defino el pin correspondiente al led builtin (PINB5) como salida. 
 	DDRB |= (1 << TRIGGER) | (1 << SERVO3) | (1 << SERVO2);			// Defino los pines correspondientes DE PINB como salidas.
-	DDRB &= ~(1 << ECHO);											// Establezco los pines correspondientes de PINB como entradas. 
-	DDRD |= (1 << SERVO1);											// Establezco los pines correspondientes de PIND como salidas.			
-	DDRD &= ~((1 << IR0) | (1 << IR1) | (1 << IR2) | (1 << IR3) );	// Establezco los pines correspondientes de PIND como entradas.
+	DDRB &= ~(1 << ECHO);											// Establezco los pines correspondientes de PINB como entradas.
+	PORTB |= (1 << ECHO);											// Pull-up en ECHO: evita flotacion cuando no hay sensor conectado.
+	DDRD |= (1 << SERVO1);											// Establezco los pines correspondientes de PIND como salidas.
+	DDRD  &= ~(1 << BTN_SMALL);									// D6 como entrada.
+	PORTD &= ~(1 << BTN_SMALL);									// Pull-up interno desactivado (se usa pull-down externo).
+	DDRB  &= ~(1 << BTN_MEDIUM);								// D8 como entrada.
+	PORTB &= ~(1 << BTN_MEDIUM);								// Pull-up interno desactivado (se usa pull-down externo).
 }
 
 void On1ms ()
 {
-// En esta función se realizan los eventos correspondientes cada 1ms.
+// En esta funciï¿½n se realizan los eventos correspondientes cada 1ms.
 	
-	if (!time100ms)				// Compruebo si ya pasó 100ms.
+	if (!time100ms)				// Compruebo si ya pasï¿½ 100ms.
 	time100ms = 100;			// Reinicio el contador de 100ms.
 	
 	time100ms--;				// Descuento 1 al contador de time10ms.
 	
 	if (servo_hold_timer > 0)
 		servo_hold_timer--;	// Decrementa el temporizador del servo.
+
+	if (est_delay_timer > 0)
+		est_delay_timer--;
 
 	HCSR04_On1ms(&sensor);		// Inicio el contador interno de 1ms del sensor HCSR04.
 	
@@ -211,10 +212,10 @@ void On1ms ()
 
 void On1us()
 {
-// En esta función se realizan los eventos correspondientes cada 1us.
+// En esta funciï¿½n se realizan los eventos correspondientes cada 1us.
 
-	//OCR2A += 2;				// Programo la próxima interrupción 20 ticks después de la anterior.
-							// En vez de esperar otra vuelta del timer, se programa el próximo evento relativo al actual.
+	//OCR2A += 2;				// Programo la prï¿½xima interrupciï¿½n 20 ticks despuï¿½s de la anterior.
+							// En vez de esperar otra vuelta del timer, se programa el prï¿½ximo evento relativo al actual.
 	
 	HCSR04_On1us(&sensor);  // Inicio el contador interno de 1us del sensor HCSR04.
 	
@@ -223,7 +224,7 @@ void On1us()
 
 void Heartbeat ()
 {
-/* En esta función se realiza la secuencia del led builtin que indica el contínuo funcionamiento del sistema.	
+/* En esta funciï¿½n se realiza la secuencia del led builtin que indica el contï¿½nuo funcionamiento del sistema.	
 
 	El led builtin se enciende 100ms y se apaga 100ms.
 		 ____	    ____	   ____
@@ -255,30 +256,76 @@ uint8_t HCSR04_EchoRead()
 
 void decodeCMD()
 {
-	
+	uint8_t busy = (state != CS_MEASURE || servo_active);
+
+	switch (srx.cmd)
+	{
+		case CMD_GET_STATE:
+			stx.cmd        = CMD_STATE;
+			stx.payload[0] = (uint8_t)state;
+			stx.payloadLen = 1;
+			buildCMD(&stx);
+		break;
+
+		case CMD_GET_COUNTS:
+			stx.cmd        = CMD_COUNTS;
+			stx.payload[0] = (box_count[BOX_SMALL]  >> 8) & 0xFF;
+			stx.payload[1] =  box_count[BOX_SMALL]        & 0xFF;
+			stx.payload[2] = (box_count[BOX_MEDIUM] >> 8) & 0xFF;
+			stx.payload[3] =  box_count[BOX_MEDIUM]       & 0xFF;
+			stx.payload[4] = (box_count[BOX_BIG]    >> 8) & 0xFF;
+			stx.payload[5] =  box_count[BOX_BIG]          & 0xFF;
+			stx.payloadLen = 6;
+			buildCMD(&stx);
+		break;
+
+		case CMD_SET_MODE:
+			if (!busy) conv_mode = srx.payload[0];
+			stx.cmd        = CMD_ACK;
+			stx.payload[0] = CMD_SET_MODE;
+			stx.payload[1] = busy ? ACK_BUSY : ACK_OK;
+			stx.payloadLen = 2;
+			buildCMD(&stx);
+		break;
+
+		case CMD_SET_THRESH:
+			if (!busy) CLASSIFIER_SetThresholds(srx.payload[0], srx.payload[1], srx.payload[2]);
+			stx.cmd        = CMD_ACK;
+			stx.payload[0] = CMD_SET_THRESH;
+			stx.payload[1] = busy ? ACK_BUSY : ACK_OK;
+			stx.payloadLen = 2;
+			buildCMD(&stx);
+		break;
+
+		case CMD_SET_CALIB:
+			if (!busy) CLASSIFIER_SetRefDist(srx.payload[0]);
+			stx.cmd        = CMD_ACK;
+			stx.payload[0] = CMD_SET_CALIB;
+			stx.payload[1] = busy ? ACK_BUSY : ACK_OK;
+			stx.payloadLen = 2;
+			buildCMD(&stx);
+		break;
+
+		case CMD_RESET_COUNTS:
+			box_count[BOX_SMALL]  = 0;
+			box_count[BOX_MEDIUM] = 0;
+			box_count[BOX_BIG]    = 0;
+			stx.cmd        = CMD_ACK;
+			stx.payload[0] = CMD_RESET_COUNTS;
+			stx.payload[1] = ACK_OK;
+			stx.payloadLen = 2;
+			buildCMD(&stx);
+		break;
+	}
 }
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
-//|                                              CÓDIGO PRINCIPAL		                                             |
+//|                                              Cï¿½DIGO PRINCIPAL		                                             |
 //|__________________________________________________________________________________________________________________|
 
 
 
-uint8_t classify_box(uint8_t d_cm)
-{
-// Calcula la altura de la caja y la clasifica. Retorna: 1=small, 2=medium, 3=big.
-// Si d_cm >= REFERENCE_DIST_CM no hay caja detectable (retorna 0).
-
-	if (d_cm >= REFERENCE_DIST_CM)
-		return 0;
-
-	uint8_t h = REFERENCE_DIST_CM - d_cm;	// Altura de la caja en cm.
-
-	if (h >= boxs.h_big)    return 3;		// Caja grande.
-	if (h >= boxs.h_medium) return 2;		// Caja mediana.
-	return 1;							// Caja pequena.
-}
 
 int main(void)
 {
@@ -288,15 +335,17 @@ int main(void)
 	ini_TIMER2();								// Inicio el Timer 2.
 	ini_TIMER1 ();							// Inicio el Timer 1 (necesario para el PWM de los servos).
 	
-	ini_USART0 ();								// Inicio la comunicación USART.
-	ini_COM(&srx, &stx);						// Inicio las variables de comunicación.
+	ini_USART0 ();								// Inicio la comunicaciï¿½n USART.
+	ini_COM(&srx, &stx);						// Inicio las variables de comunicaciï¿½n.
 	
 	ini_GPIOs ();								// Inicio puertos.
 
 	SERVO_Init ();							// Inicio los servomotores (todos en posicion HOME).
+	IR_Init();								// Inicio los sensores infrarrojos.
+	CLASSIFIER_Init();						// Inicio el clasificador de cajas.
 	
 	HCSR04_Init(&sensor, &sensor_io);			// Inicio el sensor HCSR04.
-	HCSR04_SetMaxDistanceCm(&sensor, 20);		// Establezco la distancia máxima a medir.
+	HCSR04_SetMaxDistanceCm(&sensor, 20);		// Establezco la distancia mï¿½xima a medir.
 	
 	state = CS_MEASURE;
 	
@@ -305,8 +354,7 @@ int main(void)
 	while (1)
 	{
 		
-		USART_SendByte(&stx);					// Envío un byte por USART.
-		
+		USART_SendByte(&stx);					// Envï¿½o un byte por USART.
 		if(decodeHeader(&srx))					// Verifico si el mensaje cumple con el protocolo.
 		decodeCMD();							// Si el mensaje cumple, decodifico el comando.
 		
@@ -330,13 +378,13 @@ int main(void)
 				   
 				   buildCMD(&stx);				// Armo el mensaje para la transmision.
 				   
-				   if(IR_DETECTED(IR0))			// Hay una caja en la zona de medicion.
+				   if(IR_IsDetected(IR_ID_0))			// Hay una caja en la zona de medicion.
 				   {
-				   		detected_type = classify_box(d_cm);	// Clasifico la caja segun su altura.
+				   		detected_type = CLASSIFIER_Classify(d_cm);	// Clasifico la caja segun su altura.
 				   		
-				   		if      (detected_type == 3) state = CS_PUSHER3;
-				   		else if (detected_type == 2) state = CS_PUSHER2;
-				   		else if (detected_type == 1) state = CS_PUSHER1;
+				   		if      (detected_type == BOX_BIG)    { state = CS_PUSHER3; est_delay_timer = EST_DELAY_MS; }
+				   		else if (detected_type == BOX_MEDIUM) { state = CS_PUSHER2; est_delay_timer = EST_DELAY_MS; }
+				   		else if (detected_type == BOX_SMALL)  { state = CS_PUSHER1; est_delay_timer = EST_DELAY_MS; }
 				   }
 				}
 				
@@ -348,21 +396,50 @@ int main(void)
 					buildCMD(&stx);				// Armo el mensaje para la transmision.
 				}
 				
+				
+				// Simulacion IR0: boton simula deteccion de caja en zona de medicion.
+				if (!servo_active)
+				{
+					if (BTN_SMALL_PRESSED)
+					{
+						detected_type = BOX_SMALL;		// Simula caja pequena.
+						state = CS_PUSHER1;
+						est_delay_timer = EST_DELAY_MS;
+					}
+					else if (BTN_MEDIUM_PRESSED)
+					{
+						detected_type = BOX_MEDIUM;		// Simula caja mediana.
+						state = CS_PUSHER2;
+						est_delay_timer = EST_DELAY_MS;
+					}
+				}
 			break;
 			
 			case CS_PUSHER1:					// CS_PUSHER1: Una caja pequena debe ser eyectada por SERVO1.
 			
-				if(!servo_active && IR_DETECTED(IR1))	// La caja llego a la posicion del pateador 1.
+				if(!servo_active && conv_mode == MODE_NORMAL && IR_IsDetected(IR_ID_1))
 				{
-					SERVO_Set(SERVO_ID_1, SERVO_PUSH);	// Extiendo el servo 1.
+					SERVO_Set(SERVO_ID_1, SERVO_PUSH);
+					servo_hold_timer = SERVO_HOLD_MS;
+					servo_active = TRUE;
+				}
+
+				if(!servo_active && conv_mode == MODE_ESTIMATED && !est_delay_timer)
+				{
+					SERVO_Set(SERVO_ID_1, SERVO_PUSH);
 					servo_hold_timer = SERVO_HOLD_MS;
 					servo_active = TRUE;
 				}
 			
 				if(servo_active && !servo_hold_timer)	// El tiempo de empuje termino.
 				{
-					SERVO_Set(SERVO_ID_1, SERVO_HOME);	// Retraigo el servo 1.
+					SERVO_Set(SERVO_ID_1, SERVO_HOME);
 					servo_active = FALSE;
+					box_count[BOX_SMALL]++;
+					stx.cmd        = CMD_BOX_EJECTED;
+					stx.payload[0] = BOX_SMALL;
+					stx.payloadLen = 1;
+					buildCMD(&stx);
 					state = CS_MEASURE;
 				}
 			
@@ -370,17 +447,29 @@ int main(void)
 			
 			case CS_PUSHER2:					// CS_PUSHER2: Una caja mediana debe ser eyectada por SERVO2.
 			
-				if(!servo_active && IR_DETECTED(IR2))	// La caja llego a la posicion del pateador 2.
+				if(!servo_active && conv_mode == MODE_NORMAL && IR_IsDetected(IR_ID_2))
 				{
-					SERVO_Set(SERVO_ID_2, SERVO_PUSH);	// Extiendo el servo 2.
+					SERVO_Set(SERVO_ID_2, SERVO_PUSH);
+					servo_hold_timer = SERVO_HOLD_MS;
+					servo_active = TRUE;
+				}
+
+				if(!servo_active && conv_mode == MODE_ESTIMATED && !est_delay_timer)
+				{
+					SERVO_Set(SERVO_ID_2, SERVO_PUSH);
 					servo_hold_timer = SERVO_HOLD_MS;
 					servo_active = TRUE;
 				}
 			
 				if(servo_active && !servo_hold_timer)	// El tiempo de empuje termino.
 				{
-					SERVO_Set(SERVO_ID_2, SERVO_HOME);	// Retraigo el servo 2.
+					SERVO_Set(SERVO_ID_2, SERVO_HOME);
 					servo_active = FALSE;
+					box_count[BOX_MEDIUM]++;
+					stx.cmd        = CMD_BOX_EJECTED;
+					stx.payload[0] = BOX_MEDIUM;
+					stx.payloadLen = 1;
+					buildCMD(&stx);
 					state = CS_MEASURE;
 				}
 			
@@ -388,17 +477,29 @@ int main(void)
 			
 			case CS_PUSHER3:					// CS_PUSHER3: Una caja grande debe ser eyectada por SERVO3.
 			
-				if(!servo_active && IR_DETECTED(IR3))	// La caja llego a la posicion del pateador 3.
+				if(!servo_active && conv_mode == MODE_NORMAL && IR_IsDetected(IR_ID_3))
 				{
-					SERVO_Set(SERVO_ID_3, SERVO_PUSH);	// Extiendo el servo 3.
+					SERVO_Set(SERVO_ID_3, SERVO_PUSH);
+					servo_hold_timer = SERVO_HOLD_MS;
+					servo_active = TRUE;
+				}
+
+				if(!servo_active && conv_mode == MODE_ESTIMATED && !est_delay_timer)
+				{
+					SERVO_Set(SERVO_ID_3, SERVO_PUSH);
 					servo_hold_timer = SERVO_HOLD_MS;
 					servo_active = TRUE;
 				}
 			
 				if(servo_active && !servo_hold_timer)	// El tiempo de empuje termino.
 				{
-					SERVO_Set(SERVO_ID_3, SERVO_HOME);	// Retraigo el servo 3.
+					SERVO_Set(SERVO_ID_3, SERVO_HOME);
 					servo_active = FALSE;
+					box_count[BOX_BIG]++;
+					stx.cmd        = CMD_BOX_EJECTED;
+					stx.payload[0] = BOX_BIG;
+					stx.payloadLen = 1;
+					buildCMD(&stx);
 					state = CS_MEASURE;
 				}
 			

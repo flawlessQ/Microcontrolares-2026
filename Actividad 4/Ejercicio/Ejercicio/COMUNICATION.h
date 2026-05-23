@@ -1,77 +1,101 @@
 #ifndef COMUNICATION_H_
 #define COMUNICATION_H_
 
-#include <avr/io.h>	//Esta librería incluye acceso a los registros del microcontrolador.
+#include <avr/io.h>	//Esta librerï¿½a incluye acceso a los registros del microcontrolador.
 
-#define BUFRXSIZE	128		  // Tamaño del buffer de recepción.
-#define BUFTXSIZE	128		  // Tamaño del buffer de transmisión.
+#define BUFRXSIZE	128		  // Tamaï¿½o del buffer de recepciï¿½n.
+#define BUFTXSIZE	128		  // Tamaï¿½o del buffer de transmisiï¿½n.
 
-#define PAYLOADMAX  16		  // Tamaño máximo del payload.
+#define PAYLOADMAX  16		  // Tamaï¿½o mï¿½ximo del payload.
 
 typedef struct{
 // Estructura del buffer circular.
 
 	uint8_t *buf;				// Puntero al arreglo real donde se guardan los datos.
-	uint8_t iw;					// Índice de escritura. Indica en qué posición se va a guardar el próximo dato recibido.
-	uint8_t ir;					// Índice de lectura. Indica desde qué posición se va a leer el próximo dato.
-	uint8_t size;				// Tamaño total del buffer.
+	uint8_t iw;					// ï¿½ndice de escritura. Indica en quï¿½ posiciï¿½n se va a guardar el prï¿½ximo dato recibido.
+	uint8_t ir;					// ï¿½ndice de lectura. Indica desde quï¿½ posiciï¿½n se va a leer el prï¿½ximo dato.
+	uint8_t size;				// Tamaï¿½o total del buffer.
 	
 }_sRingBuff;
 
 typedef struct{
-// Estructura de recepción.
+// Estructura de recepciï¿½n.
 
-	_sRingBuff rBuf;				// El buffer circular de recepción.
-	uint8_t timeout;				// Controla tiempo máximo entre bytes.
-	uint8_t hdrState;				// Estado del decodificador de cabecera del protocolo. Sirve para saber en qué parte de la trama estás.
+	_sRingBuff rBuf;				// El buffer circular de recepciï¿½n.
+	uint8_t timeout;				// Controla tiempo mï¿½ximo entre bytes.
+	uint8_t hdrState;				// Estado del decodificador de cabecera del protocolo. Sirve para saber en quï¿½ parte de la trama estï¿½s.
 	uint8_t nBytes;					// Cantidad de bytes esperados o recibidos.
-	uint8_t bodyIndex;				// Indica en que parte del Length estás
+	uint8_t bodyIndex;				// Indica en que parte del Length estï¿½s
 	uint8_t cmd;					// Byte de CMD.
-	uint8_t payload[PAYLOADMAX];	// Datos útiles que guardar.
-	uint8_t payloadLen;				// Tamaño del Payload.
+	uint8_t payload[PAYLOADMAX];	// Datos ï¿½tiles que guardar.
+	uint8_t payloadLen;				// Tamaï¿½o del Payload.
 	uint8_t cks;					// Checksum.
 }_sRX;
 
 typedef struct{
-// Estructura de transmisión.
+// Estructura de transmisiï¿½n.
 
-	_sRingBuff rBuf;				// El buffer circular de recepción.
+	_sRingBuff rBuf;				// El buffer circular de recepciï¿½n.
 	uint8_t cmd;					// Byte de CMD.
-	uint8_t length;					// Tamaño de los datos (cmd + payload + cks).
-	uint8_t payload[PAYLOADMAX];	// Datos útiles que guardar.
-	uint8_t payloadLen;				// Tamaño del Payload.
+	uint8_t length;					// Tamaï¿½o de los datos (cmd + payload + cks).
+	uint8_t payload[PAYLOADMAX];	// Datos ï¿½tiles que guardar.
+	uint8_t payloadLen;				// Tamaï¿½o del Payload.
 	uint8_t cks;					// Checksum.
 	
 }_sTX;
 
-void ini_USART0 ();						// Función de inicialización de la comunicación USART, configurada en 115200 8N1.
+void ini_USART0 ();						// Funciï¿½n de inicializaciï¿½n de la comunicaciï¿½n USART, configurada en 115200 8N1.
 
-void ini_COM(_sRX *srx, _sTX *stx);		/*	Función de inicialización del buffer y protocolo.
+void ini_COM(_sRX *srx, _sTX *stx);		/*	Funciï¿½n de inicializaciï¿½n del buffer y protocolo.
 											Se debe de enviar:
-											- Un puntero a una estructura de recepción.
-											- Un puntero a una estructura de transmisión.
+											- Un puntero a una estructura de recepciï¿½n.
+											- Un puntero a una estructura de transmisiï¿½n.
 											Se la debe declarar antes de comenzar el bucle principal.	*/
 
-_Bool decodeHeader(_sRX *srx);			/*	En esta función de valida la trama recibida por USART.
-											El formato de trama esperado por el protocolo de comunicación:
+_Bool decodeHeader(_sRX *srx);			/*	En esta funciï¿½n de valida la trama recibida por USART.
+											El formato de trama esperado por el protocolo de comunicaciï¿½n:
 											 _________________________________________________________________
 											|     |     |     |     |        |     |     |         |          |
 											| 'U' | 'N' | 'E' | 'R' | LENGTH | ':' | CMD | PAYLOAD | CHECKSUM |
 											|_____|_____|_____|_____|________|_____|_____|_________|__________|
-											Se debe de pasar como parámetro un puntero a una estructura de recepción.
-											Esta función debe de llamarse constantemente en el bucle principal.
+											Se debe de pasar como parï¿½metro un puntero a una estructura de recepciï¿½n.
+											Esta funciï¿½n debe de llamarse constantemente en el bucle principal.
 										*/	
 
 
-void USART_SendByte(_sTX *stx);			// En esta función se envía 1 byte mediante USART.
-										// Se debe pasar como parámetro Un puntero a una estructura de transmisión.
+void USART_SendByte(_sTX *stx);			// En esta funciï¿½n se envï¿½a 1 byte mediante USART.
+										// Se debe pasar como parï¿½metro Un puntero a una estructura de transmisiï¿½n.
 
-void buildCMD(_sTX *stx);				/* En esta función se arma el mensaje con el protocolo, el comando y el payload. 
-										   El formato de trama creado por la función:
+void buildCMD(_sTX *stx);				/* En esta funciï¿½n se arma el mensaje con el protocolo, el comando y el payload. 
+										   El formato de trama creado por la funciï¿½n:
 										   _________________________________________________________________
 										   |     |     |     |     |        |     |     |         |          |
 										   | 'U' | 'N' | 'E' | 'R' | LENGTH | ':' | CMD | PAYLOAD | CHECKSUM |
 										   |_____|_____|_____|_____|________|_____|_____|_________|__________|
-										   Se debe pasar como parámetro Un puntero a una estructura de transmisión.
+										   Se debe pasar como parï¿½metro Un puntero a una estructura de transmisiï¿½n.
 								 	    */
+
+// Comandos firmware -> GUI (TX)
+#define CMD_ERR_SENSOR   0xA0	// Error en HC-SR04.
+#define CMD_DIST_MEAS    0xA1	// Medicion de distancia (payload: d_cm).
+#define CMD_BOX_CLASSIF  0xA2	// Caja clasificada (payload: type).
+#define CMD_BOX_EJECTED  0xA3	// Caja eyectada (payload: type).
+#define CMD_STATE        0xA4	// Estado de la cinta (payload: state).
+#define CMD_COUNTS       0xA5	// Contadores de cajas (payload: 6 bytes).
+#define CMD_ACK          0xA6	// ACK/NAK de comando (payload: echo_cmd, status).
+
+// Comandos GUI -> firmware (RX)
+#define CMD_GET_STATE    0xB0	// Consulta estado actual.
+#define CMD_GET_COUNTS   0xB1	// Consulta contadores.
+#define CMD_SET_MODE     0xB2	// Cambia modo: 0=Normal, 1=Estimado.
+#define CMD_SET_BOX_MAP  0xB3	// Mapeo caja->servo (payload: s_srv m_srv b_srv).
+#define CMD_SET_THRESH   0xB4	// Umbrales de altura (payload: h_small h_med h_big).
+#define CMD_SET_CALIB    0xB5	// Calibracion distancia de referencia (payload: ref_dist).
+#define CMD_RESET_COUNTS 0xB6	// Reinicia contadores.
+
+// Status de ACK
+#define ACK_OK           0x00	// Comando procesado correctamente.
+#define ACK_BUSY         0x01	// Cinta en movimiento, comando rechazado.
+#define ACK_INVALID      0x02	// Comando no reconocido o payload invalido.
+
 #endif

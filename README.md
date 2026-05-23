@@ -59,6 +59,8 @@ TP4 Microcontroladores/
             ├── HCSR04.c/h      <- Driver del sensor ultrasónico HC-SR04
             ├── COMUNICATION.c/h <- Driver USART / Protocolo UNER
             ├── SERVO.c/h       <- Driver software PWM para servos SG90
+            ├── IR.c/h          <- Driver sensores infrarrojos TCRT5000
+            ├── CLASSIFIER.c/h  <- Lógica de clasificación de cajas por altura
             └── Debug/          <- Binarios compilados (.hex, .elf)
 ```
 
@@ -202,27 +204,243 @@ Driver de software PWM para tres servos SG90:
 
 ---
 
+### 15/05/2026 (continuación) — Simulación de HC-SR04 con botones y depuración (Juan Ignacio)
+
+#### Problema: sin HC-SR04 disponible en el banco
+
+Se agregó simulación del sensor HC-SR04 usando dos botones físicos:
+
+| Botón | Pin | Simula |
+|-------|-----|--------|
+| BTN_SMALL | PD6 (Arduino D6) | Caja pequeña → SERVO1 |
+| BTN_MEDIUM | PB0 (Arduino D8) | Caja mediana → SERVO2 |
+
+Ambos botones usan **resistencia pull-down externa** (activo alto: presionar conecta el pin a 5V).
+
+#### Bugs encontrados y corregidos
+
+| Bug | Causa | Fix |
+|-----|-------|-----|
+| Servo se movía al flashear y luego no respondía | `SERVO_Set(SERVO_ID_1, SERVO_PUSH)` dejado de un test de diagnóstico | Removido |
+| Falsa transición de estado en CS_MEASURE | ECHO (PB2) flotante → HC-SR04 detectaba eco inmediatamente; IR0 (PD2) flotante → `IR_DETECTED` siempre true | `PORTB |= (1 << ECHO)` y `PORTD |= IR0|IR1|IR2|IR3` (pull-ups internos) |
+| Lógica de botones en CS_MEASURE nunca ejecutada | El bloque `if (!servo_active)` tenía `#define` dentro y sin código real | Reemplazado con `if (BTN_SMALL_PRESSED)` / `else if (BTN_MEDIUM_PRESSED)` que activan servo y transicionan al pusher correcto |
+
+#### Flujo final de simulación con botón
+
+```
+Presionar BTN_SMALL (D6):
+  → CS_MEASURE detecta presión
+  → SERVO_Set(SERVO_ID_1, SERVO_PUSH)  ← servo va a 180° inmediatamente
+  → servo_hold_timer = 500ms
+  → servo_active = TRUE
+  → state = CS_PUSHER1
+
+CS_PUSHER1 (durante 500ms):
+  → servo sigue en PUSH mientras corre el timer
+
+Al expirar el timer:
+  → SERVO_Set(SERVO_ID_1, SERVO_HOME)  ← servo vuelve a 0°
+  → servo_active = FALSE
+  → state = CS_MEASURE
+```
+
+#### Cambios en `main.c`
+
+| Cambio | Descripción |
+|--------|-------------|
+| `BTN_SMALL` / `BTN_MEDIUM` defines | PD6 y PB0 como entradas sin pull-up interno |
+| `ini_GPIOs()` | Pull-up en ECHO y en IR0-IR3 para evitar flotación |
+| `ini_TIMER1()` | Faltaba esta llamada (Timer1 nunca corría) — agregada |
+| Bloque simulación en CS_MEASURE | Reemplazó código roto con lógica correcta de botón → pusher |
+| TEST DIRECTO eliminado | Código de diagnóstico temporal removido del loop principal |
+
+---
+
+### 15/05/2026 ~18:30 — Simulación HC-SR04 con botones: flujo 2 fases (Juan Ignacio)
+
+#### Motivación
+
+La implementación anterior activaba el servo **directamente desde CS_MEASURE** al presionar el botón, salteando la lógica de detección IR en CS_PUSHER. El objetivo es que el botón solo simule la medición del HC-SR04 (la caja pasa por la zona de medición), y que el IR físico en la posición del pateador sea quien dispare el servo.
+
+#### Flujo actual con botones
+
+```
+Presionar BTN_SMALL (D6) — simula HC-SR04 + IR0:
+  → detected_type = 1 (caja pequeña)
+  → state = CS_PUSHER1   ← servo quieto todavía
+
+CS_PUSHER1: espera IR1 físico (PD3):
+  → IR_IsDetected(IR_ID_1) == true
+  → SERVO_Set(SERVO_ID_1, SERVO_PUSH)
+  → 500 ms → HOME automático → CS_MEASURE
+```
+
+#### Cambios en `main.c`
+
+| Cambio | Descripción |
+|--------|-------------|
+| CS_MEASURE bloque botones | Solo asigna `detected_type` y cambia `state`; el servo no se toca |
+| CS_PUSHER1/2/3 | Sin cambios — esperan el IR físico real para accionar |
+
+---
+
+### 15/05/2026 ~19:00 — Driver IR.c/h para sensores TCRT5000 (Juan Ignacio)
+
+**Nuevo archivo: `IR.h`**
+
+```c
+typedef enum { IR_ID_0=0, IR_ID_1=1, IR_ID_2=2, IR_ID_3=3 } _eIRID;
+
+void    IR_Init(void);
+uint8_t IR_IsDetected(_eIRID id);  // 1 = objeto detectado, 0 = libre
+```
+
+**Nuevo archivo: `IR.c`**
+
+- `IR_Init()`: configura PD2–PD5 como entradas con pull-up interno (evita flotación si el sensor no está conectado)
+- `IR_IsDetected(id)`: lee el pin correspondiente; retorna 1 cuando la señal S está en LOW (activo bajo — comportamiento del TCRT5000)
+
+**Conexión del TCRT5000:**
+
+| Pin sensor | Arduino |
+|-----------|---------|
+| V+ | 5V |
+| G | GND |
+| S | PD3 para IR1, PD4 para IR2, PD5 para IR3 |
+
+**Cambios en `main.c`:**
+
+| Cambio | Descripción |
+|--------|-------------|
+| `#include "IR.h"` | Inclusión del nuevo módulo |
+| `IR_Init()` en `main()` | Reemplaza la config de GPIOs IR que estaba en `ini_GPIOs()` |
+| `IR_DETECTED(IRx)` → `IR_IsDetected(IR_ID_x)` | Todas las lecturas IR pasan por el driver |
+| Defines `IR0`–`IR3` y macro `IR_DETECTED` | Eliminados de `main.c` |
+
+---
+
+### 15/05/2026 ~19:30 — Driver CLASSIFIER.c/h para clasificación de cajas (Juan Ignacio)
+
+La función `classify_box()`, el struct `_sBoxs` y el `#define REFERENCE_DIST_CM` se movieron de `main.c` a un módulo propio.
+
+**Nuevo archivo: `CLASSIFIER.h`**
+
+```c
+typedef enum { BOX_NONE=0, BOX_SMALL=1, BOX_MEDIUM=2, BOX_BIG=3 } _eBoxType;
+
+void      CLASSIFIER_Init(void);
+_eBoxType CLASSIFIER_Classify(uint8_t d_cm);
+```
+
+**Nuevo archivo: `CLASSIFIER.c`**
+
+- `_sBoxConfig` struct privado (static): h_small=6, h_medium=8, h_big=10
+- `REFERENCE_DIST_CM = 20` como `#define` interno — ajustar antes de montar en el banco
+- `CLASSIFIER_Classify(d_cm)`: calcula `h = REFERENCE_DIST_CM - d_cm` y retorna `_eBoxType`
+
+**Cambios en `main.c`:**
+
+| Qué | Acción |
+|-----|--------|
+| `typedef struct _sBoxs` + `boxs` global | Eliminados — lógica encapsulada en CLASSIFIER.c |
+| `#define REFERENCE_DIST_CM` | Eliminado — movido a CLASSIFIER.c |
+| `uint8_t classify_box()` | Eliminada — reemplazada por `CLASSIFIER_Classify()` |
+| `uint8_t detected_type` | Cambiado a `_eBoxType detected_type = BOX_NONE` |
+| Comparaciones `== 1/2/3` | Reemplazadas por `BOX_SMALL / BOX_MEDIUM / BOX_BIG` |
+| `CLASSIFIER_Init()` en `main()` | Agregado |
+
+---
+
+### 16/05/2026 — Planificación: protocolo UNER completo, contadores y Modo Estimado (Juan Ignacio)
+
+Definición del trabajo pendiente para completar la actividad. Tres áreas identificadas:
+
+#### 1. Protocolo UNER completo (`decodeCMD()`)
+
+`decodeCMD()` está vacío. Se define la tabla de comandos completa:
+
+**Firmware → GUI (TX)**
+
+| CMD  | Nombre          | Payload                              | Descripción                        |
+|------|-----------------|--------------------------------------|------------------------------------|
+| 0xA0 | ERR_SENSOR      | —                                    | Error HC-SR04                      |
+| 0xA1 | DIST_MEAS       | d_cm (1B)                            | Nueva medición de distancia        |
+| 0xA2 | BOX_CLASSIF     | type (1B)                            | Caja clasificada (SMALL/MED/BIG)   |
+| 0xA3 | BOX_EJECTED     | type (1B)                            | Caja eyectada (servo retraído)     |
+| 0xA4 | STATE_UPDATE    | state (1B)                           | Estado actual de la cinta          |
+| 0xA5 | BOX_COUNTS      | small(2B) medium(2B) big(2B)         | Contadores acumulados              |
+| 0xA6 | ACK             | echo_cmd(1B) status(1B)              | Confirmación / rechazo de comando  |
+
+**GUI → Firmware (RX)**
+
+| CMD  | Nombre          | Payload                              | Descripción                              |
+|------|-----------------|--------------------------------------|------------------------------------------|
+| 0xB0 | GET_STATE       | —                                    | Consulta estado de la cinta              |
+| 0xB1 | GET_COUNTS      | —                                    | Consulta contadores de cajas             |
+| 0xB2 | SET_MODE        | mode(1B): 0=Normal 1=Estimado        | Cambia modo de operación                 |
+| 0xB3 | SET_BOX_MAP     | s_srv(1B) m_srv(1B) b_srv(1B)        | Asigna caja→servo (1/2/3)                |
+| 0xB4 | SET_THRESH      | h_small(1B) h_med(1B) h_big(1B)      | Umbrales de altura (cm)                  |
+| 0xB5 | SET_CALIB       | ref_dist(1B)                         | Calibración distancia de referencia (cm) |
+| 0xB6 | RESET_COUNTS    | —                                    | Reinicia contadores                      |
+
+**Safety lock:** los comandos 0xB2–0xB5 responden `ACK_BUSY (0x01)` si `state != CS_MEASURE` o `servo_active == TRUE`.
+
+#### 2. Contadores de cajas (`main.c`)
+
+- Agregar `uint16_t box_count[4]` (índice = `_eBoxType`)
+- Incrementar en cada eyección (cuando el servo regresa a HOME)
+- Enviar `CMD_BOX_EJECTED` automáticamente al eyectar
+- Responder `CMD_COUNTS` al recibir `GET_COUNTS`
+
+#### 3. Modo Estimado (`main.c`)
+
+La actividad requiere soporte para dos modos de operación:
+
+- **Normal** (actual): el servo espera que el IR en la posición del pateador detecte la caja para disparar.
+- **Estimado**: si el IR del pateador no responde (falla o no está conectado), el servo se dispara automáticamente después de un tiempo fijo (`EST_DELAY_MS`) desde que se clasificó la caja. Modelo open-loop basado en la velocidad de la cinta.
+
+Cambios necesarios: variable global `conv_mode`, timer de estimación `est_delay_timer`, carga del timer al transicionar a `CS_PUSHERx`, y bifurcación Normal/Estimado en cada estado `CS_PUSHER`.
+
+#### 4. Extensión de `CLASSIFIER` para configuración dinámica
+
+Para que `SET_THRESH` y `SET_CALIB` funcionen, `CLASSIFIER` necesita dos nuevas funciones:
+
+```c
+void CLASSIFIER_SetThresholds(uint8_t h_small, uint8_t h_medium, uint8_t h_big);
+void CLASSIFIER_SetRefDist(uint8_t ref_cm);
+```
+
+Requiere quitar el `const` de `config` y convertir `REFERENCE_DIST_CM` a variable estática.
+
+---
+
 ## Pendientes
 
-- [ ] Calibrar `REFERENCE_DIST_CM` con el sensor montado en el banco real (medir la distancia al transportador sin caja y actualizar el valor en `main.c`)
-- [ ] Implementar `decodeCMD()` cuando se integre la GUI (Qt) — comandos para configurar el mapeo caja→servo y consultar estado
+- [ ] Implementar tabla de comandos UNER en `COMUNICATION.h` (`#define CMD_*`, `#define ACK_*`)
+- [ ] Extender `CLASSIFIER.c/h` con setters para umbrales y distancia de referencia
+- [ ] Agregar contadores de cajas en `main.c` + envío automático en eyección
+- [ ] Implementar `decodeCMD()` completo
+- [ ] Implementar Modo Estimado en `main.c` (timer de espera en `CS_PUSHERx`)
+- [ ] Calibrar `REFERENCE_DIST_CM` en `CLASSIFIER.c` con el sensor montado en el banco real
 - [ ] Probar los tres servos con osciloscopio o analizador lógico (señal 50 Hz, pulsos de 1 ms y 2 ms en PD7, PB4, PB3)
 - [ ] GUI (Qt) — pendiente de distribución de tareas con el grupo
 
 ---
 
-## Cómo probar el servo (test básico)
+## Cómo probar con los botones de simulación
 
-Agregar temporalmente en `main()` antes del `sei()`:
+**Hardware necesario:**
+- Botón entre D6 y 5V con pull-down a GND (10kΩ) — simula HC-SR04 para caja pequeña
+- Botón entre D8 y 5V con pull-down a GND (10kΩ) — simula HC-SR04 para caja mediana
+- Sensor IR TCRT5000 conectado en PD3 (IR1) o PD4 (IR2) según el pateador a probar
+- SERVO1 en D7 (PD7), SERVO2 en PB4 (Arduino D12)
 
-```c
-SERVO_Set(SERVO_ID_1, SERVO_PUSH);   // El servo debe moverse a 180°
-```
+**Secuencia de prueba SERVO1:**
+1. Presionar BTN_SMALL (D6) → sistema pasa a `CS_PUSHER1`, servo quieto
+2. Pasar un objeto frente al TCRT5000 en PD3 (IR1) → servo va a 180°
+3. A los 500 ms → servo vuelve solo a 0°, listo para nueva caja
 
-Retirar la línea para volver a HOME, o agregar:
-
-```c
-SERVO_Set(SERVO_ID_1, SERVO_HOME);   // El servo debe volver a 0°
-```
+**Secuencia de prueba SERVO2:**
+- Ídem con BTN_MEDIUM (D8) → `CS_PUSHER2` → sensor en PD4 (IR2) → SERVO2
 
 Compilar, flashear al Arduino con Microchip Studio (Debug → Start Without Debugging o cargar el `.hex` desde el menú).
