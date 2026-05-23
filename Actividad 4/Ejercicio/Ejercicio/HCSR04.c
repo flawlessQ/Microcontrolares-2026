@@ -3,16 +3,35 @@
 
   Driver portable para el sensor HC-SR04.
   No accede directamente a registros del microcontrolador.
-  Las operaciones de hardware se realizan mediante punteros a función.
+  Las operaciones de hardware se realizan mediante punteros a funciï¿½n.
+
+  Esta versiï¿½n mide el pulso ECHO usando un timer de hardware pasado
+  desde el main mediante punteros a funciï¿½n.
+
+  Supuesto de temporizado:
+      F_CPU = 16 MHz, prescaler = 8 -> frecuencia del timer = 2 MHz.
+      1 tick = 0,5 us.
+      10 us  =  20 ticks (pulso TRIG).
+      58 us/cm = 116 ticks/cm.
 */
 
-#include "HCSR04.h"
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|													INCLUDES			                                             |
+//|__________________________________________________________________________________________________________________|
+
+#include "HCSR04.h"		// Se incluye el archivo de cabecera propio.
+
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|													DEFINICIONES		                                             |
+//|__________________________________________________________________________________________________________________|
 
 /*
    Constantes privadas del driver.
 
-   Esta versión mide el pulso ECHO usando un timer de hardware pasado
-   desde el main mediante punteros a función.
+   Esta versiï¿½n mide el pulso ECHO usando un timer de hardware pasado
+   desde el main mediante punteros a funciï¿½n.
 
    Supuesto usado para las constantes en ticks:
    - F_CPU = 16 MHz
@@ -32,6 +51,11 @@
 #define HCSR04_ECHO_TIMEOUT_TICKS     60000u
 #define HCSR04_CM_DIVISOR_TICKS       116u
 
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|											Cï¿½DIGO DE FUNCIONES			                                             |
+//|__________________________________________________________________________________________________________________|
+
 void HCSR04_Init(_sHCSR04 *sensor, _sHCSR04_IO *io)
 {
 	// Copio la interfaz de hardware dentro del driver.
@@ -47,7 +71,7 @@ void HCSR04_Init(_sHCSR04 *sensor, _sHCSR04_IO *io)
 	sensor->echo_time_us = 0;
 	sensor->distance_cm = 0;
 
-	// La distancia máxima depende del montaje físico y se configura desde el main.
+	// La distancia mï¿½xima depende del montaje fï¿½sico y se configura desde el main.
 	sensor->max_distance_cm = 0;
 
 	// Limpio todas las banderas.
@@ -64,9 +88,9 @@ void HCSR04_Init(_sHCSR04 *sensor, _sHCSR04_IO *io)
 void HCSR04_Start(_sHCSR04 *sensor)
 {
 	/*
-	   Esta función se conserva por compatibilidad con la estructura anterior.
+	   Esta funciï¿½n se conserva por compatibilidad con la estructura anterior.
 
-	   En esta versión, la medición real se hace con HCSR04_Measure(),
+	   En esta versiï¿½n, la mediciï¿½n real se hace con HCSR04_Measure(),
 	   porque necesitamos capturar el pulso ECHO completo usando el timer
 	   de hardware.
 	*/
@@ -77,10 +101,10 @@ void HCSR04_Start(_sHCSR04 *sensor)
 void HCSR04_Update(_sHCSR04 *sensor)
 {
 	/*
-	   Esta función se conserva por compatibilidad con la estructura anterior.
+	   Esta funciï¿½n se conserva por compatibilidad con la estructura anterior.
 
-	   En esta versión no se usa la máquina de estados anterior para medir,
-	   porque esa lógica podía perder el pulso ECHO si el while principal
+	   En esta versiï¿½n no se usa la mï¿½quina de estados anterior para medir,
+	   porque esa lï¿½gica podï¿½a perder el pulso ECHO si el while principal
 	   tardaba demasiado en volver a llamar a Update().
 	*/
 
@@ -90,7 +114,7 @@ void HCSR04_Update(_sHCSR04 *sensor)
 void HCSR04_On1us(_sHCSR04 *sensor)
 {
 	/*
-	   Esta función se conserva por compatibilidad.
+	   Esta funciï¿½n se conserva por compatibilidad.
 
 	   Ya no se usa para medir el ECHO, porque el ancho del pulso lo mide
 	   directamente el timer de hardware.
@@ -101,7 +125,7 @@ void HCSR04_On1us(_sHCSR04 *sensor)
 
 void HCSR04_On1ms(_sHCSR04 *sensor)
 {
-	// Incremento el contador de milisegundos hasta llegar al período mínimo entre mediciones.
+	// Incremento el contador de milisegundos hasta llegar al perï¿½odo mï¿½nimo entre mediciones.
 	if(sensor->period_ms < HCSR04_PERIOD_MS)
 	{
 		sensor->period_ms++;
@@ -112,7 +136,7 @@ void HCSR04_Measure(_sHCSR04 *sensor)
 {
 	uint16_t ticks = 0;
 
-	// Solo permito medir si ya pasó el período mínimo entre mediciones.
+	// Solo permito medir si ya pasï¿½ el perï¿½odo mï¿½nimo entre mediciones.
 	if(sensor->period_ms < HCSR04_PERIOD_MS)
 	{
 		return;
@@ -128,16 +152,16 @@ void HCSR04_Measure(_sHCSR04 *sensor)
 	sensor->GRHCSR04 &= ~(1 << ERR0);
 	sensor->GRHCSR04 &= ~(1 << ODS0);
 
-	// Reinicio el período entre mediciones.
+	// Reinicio el perï¿½odo entre mediciones.
 	sensor->period_ms = 0;
 
-	// Estado inicial de medición.
+	// Estado inicial de mediciï¿½n.
 	sensor->state = HCSR04_TRIG;
 
 	/*
 	   Genero el pulso TRIG de 10 us usando el timer de hardware.
 
-	   El driver no sabe qué timer usa el micro.
+	   El driver no sabe quï¿½ timer usa el micro.
 	   Solo pide:
 	   - resetear timer
 	   - arrancar timer
@@ -202,22 +226,22 @@ void HCSR04_Measure(_sHCSR04 *sensor)
 		}
 	}
 
-	// Cuando ECHO baja, leo la duración medida por el timer.
+	// Cuando ECHO baja, leo la duraciï¿½n medida por el timer.
 	ticks = sensor->io.timer_get_ticks();
 
-	// Detengo el timer porque ya terminó la medición.
+	// Detengo el timer porque ya terminï¿½ la mediciï¿½n.
 	sensor->io.timer_stop();
 
 	// Guardo el tiempo aproximado en microsegundos.
 	// Con prescaler 8, cada tick equivale a 0,5 us.
 	sensor->echo_time_us = ticks / 2;
 
-	// Calculo distancia en centímetros.
+	// Calculo distancia en centï¿½metros.
 	// Como 1 cm equivale aproximadamente a 58 us:
 	// 58 us * 2 ticks/us = 116 ticks/cm.
 	sensor->distance_cm = ticks / HCSR04_CM_DIVISOR_TICKS;
 
-	// Evalúo si la distancia medida corresponde a un objeto válido.
+	// Evalï¿½o si la distancia medida corresponde a un objeto vï¿½lido.
 	if(sensor->max_distance_cm > 0)
 	{
 		if(sensor->distance_cm <= sensor->max_distance_cm)
@@ -234,7 +258,7 @@ void HCSR04_Measure(_sHCSR04 *sensor)
 		sensor->GRHCSR04 &= ~(1 << ODS0);
 	}
 
-	// Marco que hay una medición lista.
+	// Marco que hay una mediciï¿½n lista.
 	sensor->GRHCSR04 |= (1 << RDY0);
 
 	// Estado final correcto.
@@ -243,35 +267,35 @@ void HCSR04_Measure(_sHCSR04 *sensor)
 
 uint8_t HCSR04_IsReady(_sHCSR04 *sensor)
 {
-	// Devuelvo 1 si está activa la bandera de medición lista.
+	// Devuelvo 1 si estï¿½ activa la bandera de mediciï¿½n lista.
 	return (sensor->GRHCSR04 & (1 << RDY0)) ? 1 : 0;
 }
 
 uint8_t HCSR04_HasError(_sHCSR04 *sensor)
 {
-	// Devuelvo 1 si está activa la bandera de error.
+	// Devuelvo 1 si estï¿½ activa la bandera de error.
 	return (sensor->GRHCSR04 & (1 << ERR0)) ? 1 : 0;
 }
 
 uint16_t HCSR04_GetDistanceCm(_sHCSR04 *sensor)
 {
-	// Limpio la bandera de dato listo porque la distancia ya va a ser leída.
+	// Limpio la bandera de dato listo porque la distancia ya va a ser leï¿½da.
 	sensor->GRHCSR04 &= ~(1 << RDY0);
 
-	// Devuelvo la última distancia calculada en centímetros.
+	// Devuelvo la ï¿½ltima distancia calculada en centï¿½metros.
 	return sensor->distance_cm;
 }
 
 uint8_t HCSR04_IsObjectDetected(_sHCSR04 *sensor)
 {
-	// Devuelvo 1 si la última medición está dentro de la distancia máxima configurada.
+	// Devuelvo 1 si la ï¿½ltima mediciï¿½n estï¿½ dentro de la distancia mï¿½xima configurada.
 	return (sensor->GRHCSR04 & (1 << ODS0)) ? 1 : 0;
 }
 
 void HCSR04_SetMaxDistanceCm(_sHCSR04 *sensor, uint16_t distance_cm)
 {
-	// Guardo la distancia máxima válida.
-	// Este valor depende del montaje físico y se define desde el main.
+	// Guardo la distancia mï¿½xima vï¿½lida.
+	// Este valor depende del montaje fï¿½sico y se define desde el main.
 	sensor->max_distance_cm = distance_cm;
 }
 

@@ -23,6 +23,7 @@
 #define CMD_STATE        0xA4
 #define CMD_COUNTS       0xA5
 #define CMD_ACK          0xA6
+#define CMD_BOX_DISCARDED 0xA7
 
 // === Comandos GUI -> firmware (RX) ===
 #define CMD_GET_STATE    0xB0
@@ -89,6 +90,7 @@ private:
     QLCDNumber *lcdPequena;
     QLCDNumber *lcdMediana;
     QLCDNumber *lcdGrande;
+    QLCDNumber *lcdDescartadas;
 
     // Configuracion
     QGroupBox    *groupConfig;

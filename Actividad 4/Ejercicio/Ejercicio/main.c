@@ -46,6 +46,7 @@
 #include "CLASSIFIER.h"		// Esta libreria incluye la logica de clasificacion de cajas.
 
 #include "SERVO.h"			// Esta libreria incluye el driver de software PWM para los tres servomotores SG90.
+#include "CONVEYOR.h"		// Esta libreria incluye el driver de control de la cinta transportadora.
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
@@ -53,18 +54,21 @@
 //|__________________________________________________________________________________________________________________|
 
 typedef enum{
-	CS_MEASURE,				// Estado que indica que se est� midiendo una caja. 
-	CS_PUSHER1,				// Estado que indica que hay una caja que debe ser empujado por el pateador 1.  
-	CS_PUSHER2,				// Estado que indica que hay una caja que debe ser empujado por el pateador 2.  
-	CS_PUSHER3, 			// Estado que indica que hay una caja que debe ser empujado por el pateador 3.  
+	CS_MEASURE,				// Estado que indica que se est� midiendo una caja.
+	CS_PUSHER1,				// Estado que indica que hay una caja que debe ser empujado por el pateador 1.
+	CS_PUSHER2,				// Estado que indica que hay una caja que debe ser empujado por el pateador 2.
+	CS_PUSHER3, 			// Estado que indica que hay una caja que debe ser empujado por el pateador 3.
 }_eConveyorState;
 
-#define BOX_QUEUE_SIZE  8u
-
-typedef struct {
-	_eBoxType type;
-	uint16_t  est_timer;	// Cuenta regresiva desde EST_DELAY_MS; 0 = listo para Modo Estimado.
-} _sBoxQueueEntry;
+typedef struct
+{
+// Cola FIFO de contadores de paso para un sensor IR de posicion.
+// Cada entrada dice cu�ntas cajas deben pasar ANTES de que este servo dispare.
+	uint8_t count[IR_TARGET_QUEUE_SIZE];	// Contadores de cajas a ignorar por entrada.
+	uint8_t head;							// Indice de lectura.
+	uint8_t tail;							// Indice de escritura.
+	uint8_t qty;							// Cantidad de entradas activas.
+}_sIRTargetQueue;
 
 
 // __________________________________________________________________________________________________________________
@@ -79,8 +83,8 @@ typedef struct {
 #define TRIGGER PINB1		  // Trigger del sensor HC-SR04 en el PINB1.
 #define ECHO PINB2			  // Echo del sensor HC-SR04 en el PINB2.
 
-#define SERVO3 PINB3		  // Servomotor 3 en el PINB3.
-#define SERVO2 PINB4		  // Servomotor 2 en el PINB4.
+#define SERVO3 PINB4		  // Servomotor 3 en el PINB4 (D12).
+#define SERVO2 PINB3		  // Servomotor 2 en el PINB3 (D11).
 #define	SERVO1	PIND7	      // Servomotor 1 en el PIND7.
 
 
@@ -88,11 +92,18 @@ typedef struct {
 #define TRUE 1				  // Defino el estado "TRUE" como 1.
 #define FALSE 0				  // Defino el estado "FALSE" como 0.
 
-#define SERVO_HOLD_MS		500		  // Tiempo en ms que el servo permanece en posicion PUSH.
+#define SERVO_HOLD_MS              500		// Tiempo en ms que el servo permanece en posicion PUSH.
 
-#define MODE_NORMAL		0		  // Modo normal: servo espera deteccion IR del pateador.
-#define MODE_ESTIMATED	1		  // Modo estimado: servo dispara por timer fijo.
-#define EST_DELAY_MS	2000	  // Retardo estimado de transporte cinta (ms).
+#define MODE_NORMAL                0		// Modo normal: servo espera deteccion IR del pateador.
+#define MODE_ESTIMATED             1		// Modo estimado: servo dispara por timer fijo.
+
+#define EST_DELAY_DEFAULT_MS      2000u		// Tiempo de espera en Modo Estimado (ms).
+
+#define IR_TARGET_QUEUE_SIZE       8u		// Capacidad de la cola de paso por cada sensor IR.
+
+#define PUSHER_1                   0u		// Indice del pateador 1 (caja peque�a).
+#define PUSHER_2                   1u		// Indice del pateador 2 (caja mediana).
+#define PUSHER_3                   2u		// Indice del pateador 3 (caja grande).
 
 
 // __________________________________________________________________________________________________________________
@@ -116,6 +127,12 @@ void    HCSR04_TimerStart(void);
 void    HCSR04_TimerStop(void);
 uint16_t HCSR04_TimerGetTicks(void);
 
+void    IRTarget_Init(void);
+void    IRTarget_RegisterBox(_eBoxType type);
+void    IRTarget_QueuePush(uint8_t pusher, uint8_t count);
+uint8_t IRTarget_Tick(uint8_t pusher);
+uint8_t IRTarget_HasPending(void);
+
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
 //|											  VARIABLES GLOBALES	                                                 |
@@ -126,8 +143,6 @@ uint8_t time100ms = 100;	// Contador auxiliar que se utiliza para indicar cuando
 _sRX srx;					// Variable que contendr� los datos para manejar la recepci�n.
 _sTX stx;					// Variable que contendr� los datos para manejar la transmisi�n.
 		
-// _eConveyorState state — eliminado: la logica de estado ya no bloquea la medicion.
-//� los estados de la cinta transportadora.
 
 
 _sHCSR04 sensor;
@@ -143,16 +158,20 @@ _sHCSR04_IO sensor_io =
 };
 
 uint8_t d_cm;				// Distancia medida por el sensor.
+uint8_t ref;				// Distancia de referencia sensor->piso (leida de CLASSIFIER).
+uint8_t h_cm;				// Altura calculada de la caja en cm.
+_eBoxType t;				// Tipo de caja clasificada en el ultimo ciclo de medicion.
+uint8_t fire;				// Bandera temporal de disparo de servo.
 
 uint16_t servo_hold_timer[3] = {0, 0, 0};	// Hold timer por servo [SERVO_ID_1..3].
 uint8_t  servo_active[3]     = {0, 0, 0};	// Bandera de servo activo por servo.
-uint16_t box_count[4]        = {0, 0, 0, 0};	// Contadores de cajas eyectadas por tipo.
+uint16_t box_count[4]        = {0, 0, 0, 0};	// Contadores de cajas eyectadas: [0]=desc, [1]=peq, [2]=med, [3]=grande.
 uint8_t  conv_mode           = MODE_NORMAL;	// Modo de operacion (0=Normal, 1=Estimado).
 
-_sBoxQueueEntry box_queue[BOX_QUEUE_SIZE];	// Cola FIFO de cajas clasificadas.
-uint8_t  queue_head  = 0;
-uint8_t  queue_tail  = 0;
-uint8_t  queue_count = 0;
+_sIRTargetQueue ir_target[3];					// Cola de paso por cada IR de posicion (PUSHER_1/2/3).
+uint8_t         ir_pass_acc[3]          = {0, 0, 0};	// Acumulador de cajas que aun no llegaron al pateador.
+uint8_t         pusher_fire_pending[3]  = {FALSE, FALSE, FALSE};	// Bandera de disparo pendiente por pateador.
+uint16_t        box_measured_count[4]   = {0, 0, 0, 0};	// Contador de cajas medidas por tipo (incluyendo descartadas).
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
@@ -189,40 +208,6 @@ ISR(USART_RX_vect)
 //|                                   C�DIGO DE FUNCIONES PROTOT�PO		                                             |
 //|__________________________________________________________________________________________________________________|
 
-// ── Helpers de cola FIFO ──────────────────────────────────────────────────────
-
-static void queue_push(_eBoxType t)
-{
-	if(queue_count < BOX_QUEUE_SIZE)
-	{
-		box_queue[queue_tail].type      = t;
-		box_queue[queue_tail].est_timer = EST_DELAY_MS;
-		queue_tail = (queue_tail + 1) % BOX_QUEUE_SIZE;
-		queue_count++;
-	}
-}
-
-static _eBoxType queue_front_type(void)
-{
-	return (queue_count > 0) ? box_queue[queue_head].type : BOX_NONE;
-}
-
-static uint16_t queue_front_timer(void)
-{
-	return (queue_count > 0) ? box_queue[queue_head].est_timer : 1u;
-}
-
-static void queue_pop(void)
-{
-	if(queue_count > 0)
-	{
-		queue_head = (queue_head + 1) % BOX_QUEUE_SIZE;
-		queue_count--;
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
 void ini_GPIOs ()
 {
 // En esta funci�n se inicializan los puertos de entrada y salida.
@@ -247,13 +232,9 @@ void On1ms ()
 		uint8_t i;
 		for(i = 0; i < 3; i++)
 			if(servo_hold_timer[i] > 0) servo_hold_timer[i]--;
-
-		for(i = 0; i < queue_count; i++)
-		{
-			uint8_t idx = (queue_head + i) % BOX_QUEUE_SIZE;
-			if(box_queue[idx].est_timer > 0) box_queue[idx].est_timer--;
-		}
 	}
+
+	CLASSIFIER_QueueTick();
 
 	HCSR04_On1ms(&sensor);
 	IR_UpdateDebounce();
@@ -331,7 +312,8 @@ uint16_t HCSR04_TimerGetTicks(void)
 
 void decodeCMD()
 {
-	uint8_t busy = servo_active[0] || servo_active[1] || servo_active[2];
+	uint8_t busy = servo_active[0] || servo_active[1] || servo_active[2]
+	             || CLASSIFIER_QueueCount() || IRTarget_HasPending();
 
 	uint8_t reported_state = CS_MEASURE;
 	if(servo_active[2]) reported_state = CS_PUSHER3;
@@ -355,7 +337,9 @@ void decodeCMD()
 			stx.payload[3] =  box_count[BOX_MEDIUM]       & 0xFF;
 			stx.payload[4] = (box_count[BOX_BIG]    >> 8) & 0xFF;
 			stx.payload[5] =  box_count[BOX_BIG]          & 0xFF;
-			stx.payloadLen = 6;
+			stx.payload[6] = (box_count[BOX_NONE]   >> 8) & 0xFF;
+			stx.payload[7] =  box_count[BOX_NONE]         & 0xFF;
+			stx.payloadLen = 8;
 			buildCMD(&stx);
 		break;
 
@@ -390,6 +374,12 @@ void decodeCMD()
 			box_count[BOX_SMALL]  = 0;
 			box_count[BOX_MEDIUM] = 0;
 			box_count[BOX_BIG]    = 0;
+			box_count[BOX_NONE]   = 0;
+
+			box_measured_count[BOX_NONE]   = 0;
+			box_measured_count[BOX_SMALL]  = 0;
+			box_measured_count[BOX_MEDIUM] = 0;
+			box_measured_count[BOX_BIG]    = 0;
 			stx.cmd        = CMD_ACK;
 			stx.payload[0] = CMD_RESET_COUNTS;
 			stx.payload[1] = ACK_OK;
@@ -397,6 +387,123 @@ void decodeCMD()
 			buildCMD(&stx);
 		break;
 	}
+}
+
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|                                    FUNCIONES DE REGISTRO POR SENSOR IR                                           |
+//|__________________________________________________________________________________________________________________|
+
+void IRTarget_Init(void)
+{
+// En esta funci�n se inicializan las colas de paso y los acumuladores de los tres pateadores.
+
+	uint8_t i, j;
+	for(i = 0; i < 3; i++)
+	{
+		ir_target[i].head = 0;
+		ir_target[i].tail = 0;
+		ir_target[i].qty  = 0;
+		ir_pass_acc[i]    = 0;
+		pusher_fire_pending[i] = FALSE;
+		for(j = 0; j < IR_TARGET_QUEUE_SIZE; j++)
+			ir_target[i].count[j] = 0;
+	}
+	box_measured_count[BOX_NONE]   = 0;
+	box_measured_count[BOX_SMALL]  = 0;
+	box_measured_count[BOX_MEDIUM] = 0;
+	box_measured_count[BOX_BIG]    = 0;
+}
+
+void IRTarget_QueuePush(uint8_t pusher, uint8_t count)
+{
+// En esta funci�n se encola un contador de paso para un pateador.
+// count indica cu�ntas cajas deben pasar por ese IR antes de que este servo dispare.
+
+	if(pusher >= 3) return;
+
+	if(ir_target[pusher].qty < IR_TARGET_QUEUE_SIZE)
+	{
+		ir_target[pusher].count[ir_target[pusher].tail] = count;
+		ir_target[pusher].tail = (ir_target[pusher].tail + 1) % IR_TARGET_QUEUE_SIZE;
+		ir_target[pusher].qty++;
+	}
+}
+
+void IRTarget_RegisterBox(_eBoxType type)
+{
+/*	En esta funci�n se registra una caja reci�n medida en las colas de paso de cada pateador.
+	La l�gica modela el recorrido real de la caja por la cinta:
+
+	BOX_SMALL  -> se patea en Pateador 1; las siguientes pasan por IR1.
+	BOX_MEDIUM -> pasa por IR1, se patea en Pateador 2; las siguientes pasan por IR2.
+	BOX_BIG    -> pasa por IR1, IR2, se patea en Pateador 3.
+	BOX_NONE   -> descartada, pasa por todos los IR sin ser pateada.
+*/
+	box_measured_count[type]++;
+
+	// Pateador 1: ir_pass_acc[PUSHER_1] = cuantas cajas anteriores deben pasar por IR1.
+	if(type == BOX_SMALL)
+	{
+		IRTarget_QueuePush(PUSHER_1, ir_pass_acc[PUSHER_1]);
+		ir_pass_acc[PUSHER_1] = 0;
+	}
+	else
+	{
+		ir_pass_acc[PUSHER_1]++;	// MEDIUM, BIG y NONE pasan por IR1.
+	}
+
+	// Pateador 2: ir_pass_acc[PUSHER_2] = cuantas cajas anteriores deben pasar por IR2.
+	if(type == BOX_MEDIUM)
+	{
+		IRTarget_QueuePush(PUSHER_2, ir_pass_acc[PUSHER_2]);
+		ir_pass_acc[PUSHER_2] = 0;
+	}
+	else if(type != BOX_SMALL)
+	{
+		ir_pass_acc[PUSHER_2]++;	// BIG y NONE pasan por IR2 (SMALL ya fue pateada en IR1).
+	}
+
+	// Pateador 3: ir_pass_acc[PUSHER_3] = cuantas cajas anteriores deben pasar por IR3.
+	if(type == BOX_BIG)
+	{
+		IRTarget_QueuePush(PUSHER_3, ir_pass_acc[PUSHER_3]);
+		ir_pass_acc[PUSHER_3] = 0;
+	}
+	else if(type == BOX_NONE)
+	{
+		ir_pass_acc[PUSHER_3]++;	// Solo las descartadas llegan hasta IR3.
+	}
+}
+
+uint8_t IRTarget_Tick(uint8_t pusher)
+{
+/*	En esta funci�n se procesa el evento de caja detectada en un sensor IR de posicion.
+	Cada llamada descuenta una caja del contador de paso de la entrada al frente de la cola.
+	Cuando el contador llega a 0, la siguiente caja es la que debe ser pateada: devuelve TRUE.
+*/
+	if(pusher >= 3 || ir_target[pusher].qty == 0) return FALSE;
+
+	if(ir_target[pusher].count[ir_target[pusher].head] == 0)
+	{
+		// Contador en cero: esta caja es el objetivo. Avanzo la cola y devuelvo TRUE.
+		ir_target[pusher].head = (ir_target[pusher].head + 1) % IR_TARGET_QUEUE_SIZE;
+		ir_target[pusher].qty--;
+		return TRUE;
+	}
+
+	// Todavia hay cajas que dejar pasar: descuento una y devuelvo FALSE.
+	ir_target[pusher].count[ir_target[pusher].head]--;
+	return FALSE;
+}
+
+uint8_t IRTarget_HasPending(void)
+{
+// Devuelve TRUE si alguno de los tres pateadores tiene cajas pendientes de ser pateadas.
+
+	return (ir_target[PUSHER_1].qty > 0)
+	     || (ir_target[PUSHER_2].qty > 0)
+	     || (ir_target[PUSHER_3].qty > 0);
 }
 
 // __________________________________________________________________________________________________________________
@@ -423,6 +530,8 @@ int main(void)
 	SERVO_Init ();							// Inicio los servomotores (todos en posicion HOME).
 	IR_Init();								// Inicio los sensores infrarrojos.
 	CLASSIFIER_Init();						// Inicio el clasificador de cajas.
+	IRTarget_Init();						// Inicio las colas de paso por sensor IR.
+	ConveyorControl_Init();					// Inicio el control de la cinta transportadora.
 	
 	HCSR04_Init(&sensor, &sensor_io);			// Inicio el sensor HCSR04.
 	HCSR04_SetMaxDistanceCm(&sensor, 20);		// Establezco la distancia m�xima a medir.
@@ -438,7 +547,7 @@ int main(void)
 		
 		Heartbeat();							// Secuencia del heartbeat.
 		
-		// ── Medicion: siempre activa, independiente de los servos ──────────
+		// ── Medicion (flanco ascendente IR0): siempre activa ────────────
 		if(IR_RisingEdge(IR_ID_0))
 		{
 			HCSR04_Measure(&sensor);
@@ -447,15 +556,38 @@ int main(void)
 			{
 				d_cm = HCSR04_GetDistanceCm(&sensor);
 
+				ref  = CLASSIFIER_GetRefDist();
+				h_cm = (d_cm < ref) ? (ref - d_cm) : 0u;
 				stx.cmd        = CMD_DIST_MEAS;
-				stx.payload[0] = d_cm;
+				stx.payload[0] = h_cm;
 				stx.payloadLen = 1;
 				buildCMD(&stx);
 
 				if(HCSR04_IsObjectDetected(&sensor))
 				{
-					_eBoxType t = CLASSIFIER_Classify(d_cm);
-					if(t != BOX_NONE) queue_push(t);
+					t = CLASSIFIER_Classify(d_cm);
+
+					if(conv_mode == MODE_NORMAL)
+					{
+						// Modo Normal: registro la caja en las colas de paso de cada IR.
+						IRTarget_RegisterBox(t);
+					}
+					else
+					{
+						// Modo Estimado: encolo directamente con timer fijo.
+						if(t != BOX_NONE)
+						{
+							CLASSIFIER_QueuePush(t, EST_DELAY_DEFAULT_MS);
+						}
+						else
+						{
+							// Caja fuera de rango: se descarta y se notifica a la GUI.
+							box_count[BOX_NONE]++;
+							stx.cmd        = CMD_BOX_DISCARDED;
+							stx.payloadLen = 0;
+							buildCMD(&stx);
+						}
+					}
 				}
 			}
 
@@ -468,14 +600,47 @@ int main(void)
 			}
 		}
 
-		// ── Pateador 1 — SMALL ───────────────────────────────────────────
-		if(!servo_active[0] && queue_front_type() == BOX_SMALL)
+		// ── Flancos ascendentes IR1/IR2/IR3: registro de paso en Modo Normal ──
+		if(conv_mode == MODE_NORMAL)
 		{
-			uint8_t fire = (conv_mode == MODE_NORMAL   && IR_IsDetected(IR_ID_1))
-			            || (conv_mode == MODE_ESTIMATED && queue_front_timer() == 0);
+			if(IR_RisingEdge(IR_ID_1))
+			{
+				if(IRTarget_Tick(PUSHER_1))
+					pusher_fire_pending[PUSHER_1] = TRUE;
+			}
+
+			if(IR_RisingEdge(IR_ID_2))
+			{
+				if(IRTarget_Tick(PUSHER_2))
+					pusher_fire_pending[PUSHER_2] = TRUE;
+			}
+
+			if(IR_RisingEdge(IR_ID_3))
+			{
+				if(IRTarget_Tick(PUSHER_3))
+					pusher_fire_pending[PUSHER_3] = TRUE;
+			}
+		}
+
+		// ── Pateador 1 — SMALL ───────────────────────────────────────────
+		if(!servo_active[0])
+		{
+			fire = FALSE;
+
+			if(conv_mode == MODE_NORMAL)
+			{
+				fire = pusher_fire_pending[PUSHER_1];
+				if(fire) pusher_fire_pending[PUSHER_1] = FALSE;
+			}
+			else
+			{
+				fire = (CLASSIFIER_QueueFrontType() == BOX_SMALL) &&
+				       (CLASSIFIER_QueueFrontTimer() == 0);
+				if(fire) CLASSIFIER_QueuePop();
+			}
+
 			if(fire)
 			{
-				queue_pop();
 				SERVO_Set(SERVO_ID_1, SERVO_PUSH);
 				servo_hold_timer[0] = SERVO_HOLD_MS;
 				servo_active[0]     = TRUE;
@@ -493,13 +658,24 @@ int main(void)
 		}
 
 		// ── Pateador 2 — MEDIUM ──────────────────────────────────────────
-		if(!servo_active[1] && queue_front_type() == BOX_MEDIUM)
+		if(!servo_active[1])
 		{
-			uint8_t fire = (conv_mode == MODE_NORMAL   && IR_IsDetected(IR_ID_2))
-			            || (conv_mode == MODE_ESTIMATED && queue_front_timer() == 0);
+			fire = FALSE;
+
+			if(conv_mode == MODE_NORMAL)
+			{
+				fire = pusher_fire_pending[PUSHER_2];
+				if(fire) pusher_fire_pending[PUSHER_2] = FALSE;
+			}
+			else
+			{
+				fire = (CLASSIFIER_QueueFrontType() == BOX_MEDIUM) &&
+				       (CLASSIFIER_QueueFrontTimer() == 0);
+				if(fire) CLASSIFIER_QueuePop();
+			}
+
 			if(fire)
 			{
-				queue_pop();
 				SERVO_Set(SERVO_ID_2, SERVO_PUSH);
 				servo_hold_timer[1] = SERVO_HOLD_MS;
 				servo_active[1]     = TRUE;
@@ -516,13 +692,29 @@ int main(void)
 			buildCMD(&stx);
 		}
 
-		// ── Pateador 3 — BIG (siempre por timer; IR3 no montado) ────────
-		if(!servo_active[2] && queue_front_type() == BOX_BIG && queue_front_timer() == 0)
+		// ── Pateador 3 — BIG ─────────────────────────────────────────────
+		if(!servo_active[2])
 		{
-			queue_pop();
-			SERVO_Set(SERVO_ID_3, SERVO_PUSH);
-			servo_hold_timer[2] = SERVO_HOLD_MS;
-			servo_active[2]     = TRUE;
+			fire = FALSE;
+
+			if(conv_mode == MODE_NORMAL)
+			{
+				fire = pusher_fire_pending[PUSHER_3];
+				if(fire) pusher_fire_pending[PUSHER_3] = FALSE;
+			}
+			else
+			{
+				fire = (CLASSIFIER_QueueFrontType() == BOX_BIG) &&
+				       (CLASSIFIER_QueueFrontTimer() == 0);
+				if(fire) CLASSIFIER_QueuePop();
+			}
+
+			if(fire)
+			{
+				SERVO_Set(SERVO_ID_3, SERVO_PUSH);
+				servo_hold_timer[2] = SERVO_HOLD_MS;
+				servo_active[2]     = TRUE;
+			}
 		}
 		if(servo_active[2] && !servo_hold_timer[2])
 		{

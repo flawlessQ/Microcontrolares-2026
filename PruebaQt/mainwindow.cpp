@@ -213,7 +213,7 @@ void MainWindow::buildUI()
     labelEstadoCinta->setMinimumHeight(64);
     estadoLayout->addWidget(labelEstadoCinta);
 
-    labelDistancia = new QLabel("Distancia: -- cm");
+    labelDistancia = new QLabel("Altura: -- cm");
     labelDistancia->setAlignment(Qt::AlignCenter);
     labelDistancia->setStyleSheet("font-size: 13px; color: #4A5568; background: transparent;");
     estadoLayout->addWidget(labelDistancia);
@@ -239,14 +239,15 @@ void MainWindow::buildUI()
         cntLayout->addWidget(lbl, row, 0);
         cntLayout->addWidget(lcd, row, 1);
     };
-    makeCounter("Pequeña",  "#2B6CB0", lcdPequena, 0);
-    makeCounter("Mediana",  "#276749", lcdMediana, 1);
-    makeCounter("Grande",   "#C05621", lcdGrande,  2);
+    makeCounter("Pequeña",     "#2B6CB0", lcdPequena,     0);
+    makeCounter("Mediana",     "#276749", lcdMediana,     1);
+    makeCounter("Grande",      "#C05621", lcdGrande,      2);
+    makeCounter("Descartadas", "#742A2A", lcdDescartadas, 3);
 
     QPushButton *btnReset = new QPushButton("RESET CONTADORES");
     btnReset->setStyleSheet("background-color: #718096;");
     btnReset->setToolTip("Reinicia los contadores en el firmware");
-    cntLayout->addWidget(btnReset, 3, 0, 1, 2);
+    cntLayout->addWidget(btnReset, 4, 0, 1, 2);
     connect(btnReset, &QPushButton::clicked, this, &MainWindow::onResetContadores);
 
     grpCnt->setMinimumWidth(220);
@@ -263,7 +264,7 @@ void MainWindow::buildUI()
 
     QHBoxLayout *modoRow = new QHBoxLayout();
     radioNormal   = new QRadioButton("Normal (IR)");
-    radioEstimado = new QRadioButton("Estimado (Timer)");
+    radioEstimado = new QRadioButton("Estimado (Velocidad)");
     radioNormal->setChecked(true);
     modoRow->addWidget(radioNormal);
     modoRow->addWidget(radioEstimado);
@@ -409,6 +410,10 @@ void MainWindow::actualizarContadores(const QByteArray &payload)
     lcdPequena->display(s);
     lcdMediana->display(m);
     lcdGrande->display(b);
+    if (payload.size() >= 8) {
+        quint16 n = (static_cast<quint8>(payload[6]) << 8) | static_cast<quint8>(payload[7]);
+        lcdDescartadas->display(n);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -454,7 +459,7 @@ void MainWindow::onConnectClicked()
         labelEstadoCinta->setStyleSheet(
             "background-color: #718096; color: white; font-size: 15px; font-weight: bold;"
             "border-radius: 8px; padding: 16px 10px;");
-        labelDistancia->setText("Distancia: -- cm");
+        labelDistancia->setText("Altura: -- cm");
         setConfigLocked(false);
         log("Puerto cerrado.");
     }
@@ -478,14 +483,14 @@ void MainWindow::onPaqueteRecibido(quint8 cmd, QByteArray payload)
 
     case CMD_ERR_SENSOR:
         log("[A0] ⚠ Error sensor HC-SR04");
-        labelDistancia->setText("Distancia: ERROR");
+        labelDistancia->setText("Altura: ERROR");
         labelDistancia->setStyleSheet("font-size: 13px; color: #E53E3E; background: transparent;");
         break;
 
     case CMD_DIST_MEAS:
         if (!payload.isEmpty()) {
             quint8 d = static_cast<quint8>(payload[0]);
-            labelDistancia->setText(QString("Distancia: %1 cm").arg(d));
+            labelDistancia->setText(QString("Altura: %1 cm").arg(d));
             labelDistancia->setStyleSheet("font-size: 13px; color: #4A5568; background: transparent;");
         }
         break;
@@ -513,6 +518,10 @@ void MainWindow::onPaqueteRecibido(quint8 cmd, QByteArray payload)
 
     case CMD_COUNTS:
         actualizarContadores(payload);
+        break;
+
+    case CMD_BOX_DISCARDED:
+        log("[A7] ✗ Caja descartada — fuera de rango o cajas pegadas");
         break;
 
     case CMD_ACK:
@@ -575,5 +584,6 @@ void MainWindow::onResetContadores()
     lcdPequena->display(0);
     lcdMediana->display(0);
     lcdGrande->display(0);
+    lcdDescartadas->display(0);
     log("[RST]  Contadores reseteados.");
 }

@@ -1,36 +1,58 @@
 /*
   COMUNICATION.c
- 
-  Inicialización del USART en 115200 8N1.
-  Decodificación de los datos recibidos.
+
+  Mï¿½dulo de comunicaciï¿½n USART para el protocolo UNER.
+  Inicializaciï¿½n del USART en 115200 8N1 (modo doble velocidad asincrï¿½nico).
+  Codificaciï¿½n y decodificaciï¿½n de tramas con el formato UNER.
 */
+
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|													INCLUDES			                                             |
+//|__________________________________________________________________________________________________________________|
+
 #include "COMUNICATION.h"	// Se incluye el archivo de cabecera propio.
 
-#define TRUE 1				// Defino "TRUE" como 1. 
-#define FALSE 0				// Defino "FALSE" como 0. 
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|													DEFINICIONES		                                             |
+//|__________________________________________________________________________________________________________________|
 
-uint8_t bufRX[BUFRXSIZE];	// Buffer de recepción.
-uint8_t bufTX[BUFTXSIZE];	// Buffer de transmisión.
+#define TRUE 1				// Defino "TRUE" como 1.
+#define FALSE 0				// Defino "FALSE" como 0.
+
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|												VARIABLES GLOBALES		                                             |
+//|__________________________________________________________________________________________________________________|
+
+uint8_t bufRX[BUFRXSIZE];	// Buffer circular de recepciï¿½n (128 bytes).
+uint8_t bufTX[BUFTXSIZE];	// Buffer circular de transmisiï¿½n (128 bytes).
+
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|											Cï¿½DIGO DE FUNCIONES			                                             |
+//|__________________________________________________________________________________________________________________|
 
 void ini_USART0 ()
 {
-// En esta función se establecen las condiciones de la comunicación USART.
-// La configuración del USART será: 115200 8N1.
+// En esta funciï¿½n se establecen las condiciones de la comunicaciï¿½n USART.
+// La configuraciï¿½n del USART serï¿½: 115200 8N1.
 
 /*
-   Se debe de configurar el modo de operación para el USART.
+   Se debe de configurar el modo de operaciï¿½n para el USART.
    De acuerdo a la tabla 20-1 de la hoja de datos del microcontrolador,
    para poder setear el modo del USART se debe de configurar el registro UBRRn (En este caso es UBRR0 para USART0) y 
-   estableciendo un valor de baud rate (velocidad de transmisión):
+   estableciendo un valor de baud rate (velocidad de transmisiï¿½n):
 	
     _____________________________________________________________
-   |		  MODE			   |       Ecuación para UBRRn       |
+   |		  MODE			   |       Ecuaciï¿½n para UBRRn       |
    |---------------------------|---------------------------------|
-   |Normal Asincrónico         | UBRRn = F_CPU / (16 * BAUD) - 1 |
+   |Normal Asincrï¿½nico         | UBRRn = F_CPU / (16 * BAUD) - 1 |
    |---------------------------|---------------------------------|
-   |Doble velocidad Asincrónico| UBRRn = F_CPU / (8 * BAUD) - 1  |
+   |Doble velocidad Asincrï¿½nico| UBRRn = F_CPU / (8 * BAUD) - 1  |
    |---------------------------|---------------------------------|
-   |Maestro sincrónico         | UBRRn = F_CPU / (2 * BAUD) - 1  |
+   |Maestro sincrï¿½nico         | UBRRn = F_CPU / (2 * BAUD) - 1  |
     -------------------------------------------------------------
 	 __________________________________________________________
 	| Si:                                                      |
@@ -38,12 +60,12 @@ void ini_USART0 ()
 	| F_CPU = 16MHz											   |
 	| 														   |
 	| Como el baud rate se lo debe establecer de acuerdo a las |
-	| necesidades (velocidad de transmisión que se necesite),  |
-	| lo estableceré en 115200:								   |
+	| necesidades (velocidad de transmisiï¿½n que se necesite),  |
+	| lo establecerï¿½ en 115200:								   |
 	| 														   |
 	| BAUD = 115200											   |
 	| 														   |
-	| MODO:  Doble Velocidad Asincrónico					   |
+	| MODO:  Doble Velocidad Asincrï¿½nico					   |
 	| 														   |
 	| Entonces:												   |
 	|                                                          |
@@ -55,31 +77,31 @@ void ini_USART0 ()
 	UBRR0L = (uint8_t)(16 & 0xFF);		// Guarda esa parte baja de 16 en UBRR0L.
 
 
-   // Además de cargar UBRR0 con el valor calculado, para usar el modo de doble velocidad asincrónico 
+   // Ademï¿½s de cargar UBRR0 con el valor calculado, para usar el modo de doble velocidad asincrï¿½nico 
    // se debe activar el bit U2X0 del registro UCSR0A.
    
 	UCSR0A |= (1 << U2X0);	// Pone en 1 el bit U2X0 del registro UCSR0A.
 
-/* Se deben de habilitar las recepciones, las transmisiones y la interrupción durante las transmisiones.
-   Esto se realiza mediante la activación de las banderas "RXCIE0", "RXENO" y "TXEN0" del registro "UCSR0B".
+/* Se deben de habilitar las recepciones, las transmisiones y la interrupciï¿½n durante las transmisiones.
+   Esto se realiza mediante la activaciï¿½n de las banderas "RXCIE0", "RXENO" y "TXEN0" del registro "UCSR0B".
    RXCIE0: Habilita interrupciones durante las transmisiones.
-   RXEN0: Habilita la recepción de datos.
-   TXEN0: Habilita la transmisión de datos.
+   RXEN0: Habilita la recepciï¿½n de datos.
+   TXEN0: Habilita la transmisiï¿½n de datos.
 */
 
 	UCSR0B |= (1 << RXCIE0) | (1 << RXEN0) | (1 << TXEN0);	/*  Activo las banderas para habilitar:
-															    interrupciones durante las transmisiones, recepción de datos y transmisión de datos. */
+															    interrupciones durante las transmisiones, recepciï¿½n de datos y transmisiï¿½n de datos. */
 	
 /*
-   Para terminar de configurar las condiciones de comunicación, se debe modificar las banderas de registro "UCSR0C".
-   En este registro se establece el modo de comunicación, la paridad, la selección del bit de parada, el tamaño de los datos durante la comunicación
+   Para terminar de configurar las condiciones de comunicaciï¿½n, se debe modificar las banderas de registro "UCSR0C".
+   En este registro se establece el modo de comunicaciï¿½n, la paridad, la selecciï¿½n del bit de parada, el tamaï¿½o de los datos durante la comunicaciï¿½n
    y la polaridad del reloj.
-   En este momento se trabajará en modo asincrónico, sin paridad, 1 bit de parada y con un tamaño de datos de 8bits.
-   Se dejan todas las banderas en 0 y solo se modificarán las banderas correspondientes al tamaño de los datos.
-   De acuerdo a la tabla 21-11 de la hoja de datos del microcontrolador, para poder setear el tamaño de los datos se debe modificar
+   En este momento se trabajarï¿½ en modo asincrï¿½nico, sin paridad, 1 bit de parada y con un tamaï¿½o de datos de 8bits.
+   Se dejan todas las banderas en 0 y solo se modificarï¿½n las banderas correspondientes al tamaï¿½o de los datos.
+   De acuerdo a la tabla 21-11 de la hoja de datos del microcontrolador, para poder setear el tamaï¿½o de los datos se debe modificar
    los bits "UCSZ02", "UCSZ01" y "UCSZ00" del registro "UCSR0C": 
     _______________________________
-   |UCSZ02|UCSZ01|UCSZ00|  TAMAÑO  |
+   |UCSZ02|UCSZ01|UCSZ00|  TAMAï¿½O  |
    |------|------|------|----------|
    |   0  |   0  |   0  |  5 bits  |
    |   0  |   0  |   1  |  6 bits  |
@@ -88,41 +110,41 @@ void ini_USART0 ()
     -------------------------------
 */
 
-	UCSR0C |= (1 << UCSZ01) | (1 << UCSZ00);	// Modifico las banderas UCSZ01 y UCSZ00 de configuración correspondiente a 8 bits de datos.
+	UCSR0C |= (1 << UCSZ01) | (1 << UCSZ00);	// Modifico las banderas UCSZ01 y UCSZ00 de configuraciï¿½n correspondiente a 8 bits de datos.
 
 }
 
 void ini_COM(_sRX *srx, _sTX *stx){
-// En esta función se inicializa buffer y protocolo.
+// En esta funciï¿½n se inicializa buffer y protocolo.
 
-	srx->rBuf.buf = bufRX;		// Guardo la dirección del primer byte del buffer de recepción.
-	srx->rBuf.size = BUFRXSIZE;	// Guardo en la estructura el tamaño total del buffer de recepción.
-	srx->rBuf.ir = 0;			// Inicializo el índice de lectura en 0.
-	srx->rBuf.iw = 0;			// Inicializo el índice de escritura en 0.
+	srx->rBuf.buf = bufRX;		// Guardo la direcciï¿½n del primer byte del buffer de recepciï¿½n.
+	srx->rBuf.size = BUFRXSIZE;	// Guardo en la estructura el tamaï¿½o total del buffer de recepciï¿½n.
+	srx->rBuf.ir = 0;			// Inicializo el ï¿½ndice de lectura en 0.
+	srx->rBuf.iw = 0;			// Inicializo el ï¿½ndice de escritura en 0.
 	srx->hdrState = 0;			// Inicializo el estado del decodificador de cabecera en 0.
 	srx->timeout = 0;			// Inicializo el contador de timeout en 0.
 	srx->nBytes = 0;			// Inicializo en 0 la cantidad de bytes que faltan recibir o procesar del cuerpo de la trama.
 	srx->cks = 0;				// Inicializo el checksum recibido/calculado en 0.
 	srx->cmd = 0;				// Inicializo el campo comando en 0.
-	srx->bodyIndex = 0;			// Inicializo el índice del cuerpo de la trama en 0.
+	srx->bodyIndex = 0;			// Inicializo el ï¿½ndice del cuerpo de la trama en 0.
 
-	stx->rBuf.buf = bufTX;		// Guardo la dirección del primer byte del buffer de transmisión.
-	stx->rBuf.size = BUFTXSIZE;	// Guardo el tamaño del buffer de transmisión.
-	stx->rBuf.ir = 0;			// Inicializo el índice de lectura del buffer de transmisión en 0.
-	stx->rBuf.iw = 0;			// Inicializo el índice de escritura del buffer de transmisión en 0.
+	stx->rBuf.buf = bufTX;		// Guardo la direcciï¿½n del primer byte del buffer de transmisiï¿½n.
+	stx->rBuf.size = BUFTXSIZE;	// Guardo el tamaï¿½o del buffer de transmisiï¿½n.
+	stx->rBuf.ir = 0;			// Inicializo el ï¿½ndice de lectura del buffer de transmisiï¿½n en 0.
+	stx->rBuf.iw = 0;			// Inicializo el ï¿½ndice de escritura del buffer de transmisiï¿½n en 0.
 }
 
 _Bool decodeHeader(_sRX *srx)
 {
 /*
-	En esta función de valida la trama recibida por USART.
-    El formato de trama esperado por el protocolo de comunicación:
+	En esta funciï¿½n de valida la trama recibida por USART.
+    El formato de trama esperado por el protocolo de comunicaciï¿½n:
        _________________________________________________________________
       |     |     |     |     |        |     |     |         |          |
       | 'U' | 'N' | 'E' | 'R' | LENGTH | ':' | CMD | PAYLOAD | CHECKSUM |
       |_____|_____|_____|_____|________|_____|_____|_________|__________|
 
-    Descripción de los campos:
+    Descripciï¿½n de los campos:
 	_______________________________________________________________________________
    | 'U','N','E','R'  : Cabecera fija que identifica el inicio de la trama.		   |
    |_______________________________________________________________________________|
@@ -136,11 +158,11 @@ _Bool decodeHeader(_sRX *srx)
    |_______________________________________________________________________________|
    | ':'              : Separador entre la cabecera y el cuerpo del mensaje.	   |
    |_______________________________________________________________________________|
-   | CMD              : Byte de comando que indica la acción o tipo de mensaje.    |
+   | CMD              : Byte de comando que indica la acciï¿½n o tipo de mensaje.    |
    |_______________________________________________________________________________|
-   | PAYLOAD          : Datos útiles del mensaje (0 a PAYLOADMAX bytes).		   |
+   | PAYLOAD          : Datos ï¿½tiles del mensaje (0 a PAYLOADMAX bytes).		   |
    |_______________________________________________________________________________|
-   | CHECKSUM         : Byte de verificación calculado con XOR de todos los		   |
+   | CHECKSUM         : Byte de verificaciï¿½n calculado con XOR de todos los		   |
    |                    bytes anteriores de la trama:							   |
    |																			   |
    |                    CHECKSUM =												   |
@@ -158,17 +180,17 @@ _Bool decodeHeader(_sRX *srx)
    |_______________________________________________________________________________|
 */
 	
-	static uint8_t hdr [] = {'U','N','E','R',0x00,':'};				// Se define un arreglo estático con la cabecera esperada del protocolo.
+	static uint8_t hdr [] = {'U','N','E','R',0x00,':'};				// Se define un arreglo estï¿½tico con la cabecera esperada del protocolo.
 		
-	uint8_t i;														// Variable utilizada como índice auxiliar.
+	uint8_t i;														// Variable utilizada como ï¿½ndice auxiliar.
 	
-	_Bool decodeOK = FALSE;											// Booleano que la función retornará. La inicializó en "FALSE".
+	_Bool decodeOK = FALSE;											// Booleano que la funciï¿½n retornarï¿½. La inicializï¿½ en "FALSE".
 	
-	i = srx->rBuf.iw;												// Guardo en "i" el valor actual del índice de escritura del buffer.				
+	i = srx->rBuf.iw;												// Guardo en "i" el valor actual del ï¿½ndice de escritura del buffer.				
 	
 	while(srx->rBuf.ir != i)										// Mientras haya datos pendientes para leer, se ejecuta el bucle.
 	{							
-		switch(srx->hdrState)										// Se evalúa el estado actual de la máquina de estados del protocolo.
+		switch(srx->hdrState)										// Se evalï¿½a el estado actual de la mï¿½quina de estados del protocolo.
 		{							
 			case 0:													// Estado inicial: busca el primer byte de la cabecera.
 			
@@ -211,55 +233,55 @@ _Bool decodeHeader(_sRX *srx)
 			case 4:													// Quinto estado: busca el quinto byte de la cabecera.
 			
 			srx->nBytes = srx->rBuf.buf[srx->rBuf.ir];				// Guardo el valor del byte actual, que representa la cantidad de bytes del cuerpo.
-																	// El cuerpo está construído por: CMD, PAYLOAD, CHECKSUM.
-			if(srx->nBytes < 2)										// Verifico si la cantidad de bytes es menor a 2 (Entre el CMD Y CHECKSUM suman 2 bytes, siento este valor el mínimo que debe de tener el cuerpo). 
+																	// El cuerpo estï¿½ construï¿½do por: CMD, PAYLOAD, CHECKSUM.
+			if(srx->nBytes < 2)										// Verifico si la cantidad de bytes es menor a 2 (Entre el CMD Y CHECKSUM suman 2 bytes, siento este valor el mï¿½nimo que debe de tener el cuerpo). 
 			{
 				srx->hdrState = 0;									// Vuelvo al estado inicial para empezar a buscar otra vez desde "U".
-				srx->timeout = 0;									// Cancelo el timeout porque la cabecera actual quedó descartada.
+				srx->timeout = 0;									// Cancelo el timeout porque la cabecera actual quedï¿½ descartada.
 				
 				break;
 			}
 			
 			srx->payloadLen = srx->nBytes - 2;						// Calculo la longitud del payload sin tener en cuenta los 2 bytes del CMD y el CHECKSUM. 
 			
-			if(srx->payloadLen > PAYLOADMAX)						// Verifico que el payload no supere el tamaño máximo permitido.
+			if(srx->payloadLen > PAYLOADMAX)						// Verifico que el payload no supere el tamaï¿½o mï¿½ximo permitido.
 			{
 				srx->hdrState = 0;									// Vuelvo al estado inicial para empezar a buscar otra vez desde "U".
-				srx->timeout = 0;									// Cancelo el timeout porque la cabecera actual quedó descartada.
+				srx->timeout = 0;									// Cancelo el timeout porque la cabecera actual quedï¿½ descartada.
 				
 				break;
 			}
 			
 			srx->hdrState = 5;										// Avanzo al siguiente estado.
-			srx->bodyIndex = 0;										// Reinicio el índice del cuerpo.
+			srx->bodyIndex = 0;										// Reinicio el ï¿½ndice del cuerpo.
 			srx->cks = 'U' ^ 'N' ^ 'E' ^ 'R' ^ srx->nBytes ^ ':';	// Inicializo el checksum calculando los bytes de la cabecera.
 			
 			break;			
 			
 			case 5:													// Sexto estado: busca el sexto byte de la cabecera.
-			if(srx->rBuf.buf[srx->rBuf.ir] == hdr[srx->hdrState])	// Comparo el byte actual del buffer con el byte esperado de la cabecera según el estado actual.
+			if(srx->rBuf.buf[srx->rBuf.ir] == hdr[srx->hdrState])	// Comparo el byte actual del buffer con el byte esperado de la cabecera segï¿½n el estado actual.
 			{
 				srx->hdrState = 6;									// Si coincide, avanzo al siguiente estado.
 			}
 			else
-			{														// Si el byte no coincide con lo esperado, la cabecera falló.
-				if(srx->rBuf.ir != 0)								// Compruebo si el índice de lectura no es 0.
+			{														// Si el byte no coincide con lo esperado, la cabecera fallï¿½.
+				if(srx->rBuf.ir != 0)								// Compruebo si el ï¿½ndice de lectura no es 0.
 				{
-					srx->rBuf.ir--;									// Si no es 0, retrocede una posición el índice de lectura.
+					srx->rBuf.ir--;									// Si no es 0, retrocede una posiciï¿½n el ï¿½ndice de lectura.
 				}
-				else if(srx->rBuf.ir == 0)							// Compruebo si el índice de lectura es igual a 0.
+				else if(srx->rBuf.ir == 0)							// Compruebo si el ï¿½ndice de lectura es igual a 0.
 				{
-					srx->rBuf.ir = (BUFRXSIZE-1);					// Si el índice de lectura es 0, como es buffer circular, vuelve al final.
+					srx->rBuf.ir = (BUFRXSIZE-1);					// Si el ï¿½ndice de lectura es 0, como es buffer circular, vuelve al final.
 				}
 				
-				srx->timeout = 0;									// Cancelo el timeout porque la cabecera actual quedó descartada.
+				srx->timeout = 0;									// Cancelo el timeout porque la cabecera actual quedï¿½ descartada.
 				srx->hdrState = 0;									// Vuelvo al estado inicial para empezar a buscar otra vez desde "U".
 			}
 			break;
 
 			case 6:													// Septimo estado: se valida el checksum.
 			
-			if(srx->nBytes > 1)										// Si quedan más de 1 byte, significa que todavía no llegó el checksum final.
+			if(srx->nBytes > 1)										// Si quedan mï¿½s de 1 byte, significa que todavï¿½a no llegï¿½ el checksum final.
 			{
 				if(srx->bodyIndex == 0)								// Si "bodyIndex" es 0, significa que este es el primer byte del cuerpo.
 				{
@@ -267,21 +289,21 @@ _Bool decodeHeader(_sRX *srx)
 					}
 					else if(srx->bodyIndex > 0 )					// Si "bodyIndex" es mayor que 0, entonces ya no estamos en el comando, sino en el payload.
 					{
-						if((srx->bodyIndex - 1) < PAYLOADMAX)		// Verifico que la posición dentro del payload siga siendo válida.
+						if((srx->bodyIndex - 1) < PAYLOADMAX)		// Verifico que la posiciï¿½n dentro del payload siga siendo vï¿½lida.
 						{
 							srx->payload[srx->bodyIndex - 1] = srx->rBuf.buf[srx->rBuf.ir];	// Guardo el byte actual dentro del arreglo payload.
 						}
 						else
-						{											// Si por alguna razón se pasa del tamaño permitido:
+						{											// Si por alguna razï¿½n se pasa del tamaï¿½o permitido:
 						srx->hdrState = 0;							// Vuelvo al estado inicial para empezar a buscar otra vez desde "U".
-						srx->timeout = 0;							// Cancelo el timeout porque la cabecera actual quedó descartada.
+						srx->timeout = 0;							// Cancelo el timeout porque la cabecera actual quedï¿½ descartada.
 						break;
 						}
 					}
 				
 					srx->cks ^= srx->rBuf.buf[srx->rBuf.ir];		// Actualizo el checksum calculando los bytes actuales del cuerpo.
 					srx->nBytes--;									// Reduce en 1 la cantidad de bytes pendientes.
-					srx->bodyIndex++;								// Avanza el índice del cuerpo para el próximo byte.
+					srx->bodyIndex++;								// Avanza el ï¿½ndice del cuerpo para el prï¿½ximo byte.
 				
 				}
 				else if(srx->nBytes == 1)							// Si queda exactamente 1 byte, ese byte ya no es parte del cuerpo sino que debe ser el checksum recibido.
@@ -290,7 +312,7 @@ _Bool decodeHeader(_sRX *srx)
 					{
 						decodeOK = TRUE;							// Si coinciden, la trama fue decodificada correctamente.
 					}	
-				srx->timeout = 0;									// Si no coincide, cancelo el timeout porque la cabecera actual quedó descartada.
+				srx->timeout = 0;									// Si no coincide, cancelo el timeout porque la cabecera actual quedï¿½ descartada.
 				srx->hdrState = 0;									// Vuelvo al estado inicial para empezar a buscar otra vez desde "U".
 				}
 
@@ -303,12 +325,12 @@ _Bool decodeHeader(_sRX *srx)
 			break;
 		}
 		
-		srx->rBuf.ir &= (srx->rBuf.size-1);							// Hago una máscara para asegurar que el índice de lectura quede dentro del tamaño del buffer.
+		srx->rBuf.ir &= (srx->rBuf.size-1);							// Hago una mï¿½scara para asegurar que el ï¿½ndice de lectura quede dentro del tamaï¿½o del buffer.
 		srx->rBuf.ir++;												// Avanzo al siguiente byte del buffer.
-		srx->rBuf.ir &= (srx->rBuf.size-1);							// Vuelvo a aplicar la máscara por si el índice se pasó del final y debe “volver al principio”.
+		srx->rBuf.ir &= (srx->rBuf.size-1);							// Vuelvo a aplicar la mï¿½scara por si el ï¿½ndice se pasï¿½ del final y debe ï¿½volver al principioï¿½.
 	}
 	
-return decodeOK;													// Si se encontró una trama válida, retorna "TRUE" y, si no, retorna "FALSE".
+return decodeOK;													// Si se encontrï¿½ una trama vï¿½lida, retorna "TRUE" y, si no, retorna "FALSE".
 }
 
 
@@ -320,7 +342,7 @@ void USART_SendByte(_sTX *stx)
 	if (stx->rBuf.ir == stx->rBuf.iw)
 	return;
 
-	// El registro UDR0 todavía no está libre
+	// El registro UDR0 todavï¿½a no estï¿½ libre
 	if (!(UCSR0A & (1 << UDRE0)))
 	return;
 
@@ -336,16 +358,16 @@ void USART_SendByte(_sTX *stx)
 
 void buildCMD(_sTX *stx)
 {
-/* En esta función se arma el mensaje con el protocolo, el comando y el payload.
-	El formato de trama creado por la función:
+/* En esta funciï¿½n se arma el mensaje con el protocolo, el comando y el payload.
+	El formato de trama creado por la funciï¿½n:
 	_________________________________________________________________
 	|     |     |     |     |        |     |     |         |          |
 	| 'U' | 'N' | 'E' | 'R' | LENGTH | ':' | CMD | PAYLOAD | CHECKSUM |
 	|_____|_____|_____|_____|________|_____|_____|_________|__________|
 */		
 
-	uint8_t i;																// Variable utilizada como índice auxiliar. 
-	uint8_t aux_buf[7];														// Array auxiliar utilizado en la escritura del buffer de transmisión.
+	uint8_t i;																// Variable utilizada como ï¿½ndice auxiliar. 
+	uint8_t aux_buf[7];														// Array auxiliar utilizado en la escritura del buffer de transmisiï¿½n.
 	
 	stx->length = stx->payloadLen + 2;										// Length de los datos (cmd + payload + cks)
 	
@@ -359,30 +381,30 @@ void buildCMD(_sTX *stx)
 
 	stx->cks = 'U' ^ 'N' ^ 'E' ^ 'R' ^ stx->length ^ ':' ^ stx->cmd;		// Calculo el checksum del header y cmd.
 	
-	for (i = 0; i < stx->payloadLen; i++)									// Bucle para recorrer el payload mediante su tamaño.
+	for (i = 0; i < stx->payloadLen; i++)									// Bucle para recorrer el payload mediante su tamaï¿½o.
 	{
 		stx->cks ^= stx->payload[i];										// Sumo al checksum los bytes del payload.
 	}
 	
 	for (i = 0; i < 7; i++)													// Bucle para recorrer la cabecera de 6 bytes y el cmd ('U' 'N' 'E' 'R' payloadLen ':' cmd).
 	{
-		stx->rBuf.buf[stx->rBuf.iw] = aux_buf[i];							// Agrego la cabecera y el cmd al buffer de transmisión.
+		stx->rBuf.buf[stx->rBuf.iw] = aux_buf[i];							// Agrego la cabecera y el cmd al buffer de transmisiï¿½n.
 		
 		stx->rBuf.iw++;														// Avanzo al siguiente byte del buffer.
-		stx->rBuf.iw &= (stx->rBuf.size-1);									// Hago una máscara para asegurar que el índice de escritura quede dentro del tamaño del buffer.
+		stx->rBuf.iw &= (stx->rBuf.size-1);									// Hago una mï¿½scara para asegurar que el ï¿½ndice de escritura quede dentro del tamaï¿½o del buffer.
 	}
 	
-	for (i = 0; i < stx->payloadLen; i++)									// Bucle para recorrer el payload mediante su tamaño.
+	for (i = 0; i < stx->payloadLen; i++)									// Bucle para recorrer el payload mediante su tamaï¿½o.
 	{
-		stx->rBuf.buf[stx->rBuf.iw] = stx->payload[i];						// Agrego los valores del payload al buffer de transmisión.
+		stx->rBuf.buf[stx->rBuf.iw] = stx->payload[i];						// Agrego los valores del payload al buffer de transmisiï¿½n.
 		
 		stx->rBuf.iw++;														// Avanzo al siguiente byte del buffer.
-		stx->rBuf.iw &= (stx->rBuf.size-1);									// Hago una máscara para asegurar que el índice de escritura quede dentro del tamaño del buffer.
+		stx->rBuf.iw &= (stx->rBuf.size-1);									// Hago una mï¿½scara para asegurar que el ï¿½ndice de escritura quede dentro del tamaï¿½o del buffer.
 	}
 	
-	stx->rBuf.buf[stx->rBuf.iw] = stx->cks;									// Agrego el checksum al buffer de transmisión.
+	stx->rBuf.buf[stx->rBuf.iw] = stx->cks;									// Agrego el checksum al buffer de transmisiï¿½n.
 	
 	stx->rBuf.iw++;															// Avanzo al siguiente byte del buffer.
-	stx->rBuf.iw &= (stx->rBuf.size-1);										// Hago una máscara para asegurar que el índice de escritura quede dentro del tamaño del buffer.
+	stx->rBuf.iw &= (stx->rBuf.size-1);										// Hago una mï¿½scara para asegurar que el ï¿½ndice de escritura quede dentro del tamaï¿½o del buffer.
 }
 

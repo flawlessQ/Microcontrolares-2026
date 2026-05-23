@@ -1,12 +1,41 @@
+/*
+  COMUNICATION.h
+
+  M�dulo de comunicaci�n USART para el protocolo UNER.
+  Configuraci�n: 115200 baud, 8N1, modo doble velocidad asincr�nico.
+
+  Formato de trama:
+   _________________________________________________________________
+  |     |     |     |     |        |     |     |         |          |
+  | 'U' | 'N' | 'E' | 'R' | LENGTH | ':' | CMD | PAYLOAD | CHECKSUM |
+  |_____|_____|_____|_____|________|_____|_____|_________|__________|
+
+  CHECKSUM = XOR de todos los bytes desde LENGTH hasta el �ltimo byte de PAYLOAD.
+*/
+
 #ifndef COMUNICATION_H_
 #define COMUNICATION_H_
 
-#include <avr/io.h>	//Esta librer�a incluye acceso a los registros del microcontrolador.
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|													INCLUDES			                                             |
+//|__________________________________________________________________________________________________________________|
 
-#define BUFRXSIZE	128		  // Tama�o del buffer de recepci�n.
-#define BUFTXSIZE	128		  // Tama�o del buffer de transmisi�n.
+#include <avr/io.h>		// Esta librer�a incluye acceso a los registros del microcontrolador.
 
-#define PAYLOADMAX  16		  // Tama�o m�ximo del payload.
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|													DEFINICIONES		                                             |
+//|__________________________________________________________________________________________________________________|
+
+#define BUFRXSIZE	128		  // Tama�o del buffer circular de recepci�n (debe ser potencia de 2).
+#define BUFTXSIZE	128		  // Tama�o del buffer circular de transmisi�n (debe ser potencia de 2).
+#define PAYLOADMAX  16		  // Tama�o m�ximo del payload en bytes.
+
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|													TYPEDEFS			                                             |
+//|__________________________________________________________________________________________________________________|
 
 typedef struct{
 // Estructura del buffer circular.
@@ -44,6 +73,11 @@ typedef struct{
 	
 }_sTX;
 
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|											FUNCIONES PROTOTIPO			                                             |
+//|__________________________________________________________________________________________________________________|
+
 void ini_USART0 ();						// Funci�n de inicializaci�n de la comunicaci�n USART, configurada en 115200 8N1.
 
 void ini_COM(_sRX *srx, _sTX *stx);		/*	Funci�n de inicializaci�n del buffer y protocolo.
@@ -75,14 +109,20 @@ void buildCMD(_sTX *stx);				/* En esta funci�n se arma el mensaje con el prot
 										   Se debe pasar como par�metro Un puntero a una estructura de transmisi�n.
 								 	    */
 
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|											TABLA DE COMANDOS			                                             |
+//|__________________________________________________________________________________________________________________|
+
 // Comandos firmware -> GUI (TX)
 #define CMD_ERR_SENSOR   0xA0	// Error en HC-SR04.
 #define CMD_DIST_MEAS    0xA1	// Medicion de distancia (payload: d_cm).
 #define CMD_BOX_CLASSIF  0xA2	// Caja clasificada (payload: type).
 #define CMD_BOX_EJECTED  0xA3	// Caja eyectada (payload: type).
 #define CMD_STATE        0xA4	// Estado de la cinta (payload: state).
-#define CMD_COUNTS       0xA5	// Contadores de cajas (payload: 6 bytes).
+#define CMD_COUNTS       0xA5	// Contadores de cajas (payload: s_hi s_lo m_hi m_lo b_hi b_lo n_hi n_lo — 8 bytes).
 #define CMD_ACK          0xA6	// ACK/NAK de comando (payload: echo_cmd, status).
+#define CMD_BOX_DISCARDED 0xA7	// Caja descartada: fuera de rango o cajas pegadas (sin payload).
 
 // Comandos GUI -> firmware (RX)
 #define CMD_GET_STATE    0xB0	// Consulta estado actual.

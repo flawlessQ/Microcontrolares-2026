@@ -19,12 +19,12 @@ Sistema automatizado de clasificación de cajas en una cinta transportadora. El 
 |------------|--------|-------|
 | HC-SR04 | ✅ Montado | TRIG=PB1, ECHO=PB2 |
 | SERVO1 (caja pequeña) | ✅ Montado | PD7 |
-| SERVO2 (caja mediana) | ✅ Montado | PB4 |
-| SERVO3 (caja grande) | ✅ Montado | PB3 |
-| IR1 — pateador 1 | ✅ Montado | PD3 |
-| IR2 — pateador 2 | ✅ Montado | PD4 (comparte pin con IR0) |
-| IR0 — zona de medición | ⚠️ Sin montar | PD2 físico sin sensor; remapeado a PD4 como workaround |
-| IR3 — pateador 3 | ❌ Sin montar | PD5; CS_PUSHER3 deshabilitado hasta instalarlo |
+| SERVO2 (caja mediana) | ✅ Montado | PB3 (D11) |
+| SERVO3 (caja grande) | ✅ Montado | PB4 (D12) |
+| IR0 — zona de medición | ✅ Montado | PD5 (D5) |
+| IR1 — pateador 1 | ✅ Montado | PD2 (D2) |
+| IR2 — pateador 2 | ✅ Montado | PD3 (D3) |
+| IR3 — pateador 3 | ✅ Montado | PD4 (D4) |
 
 ---
 
@@ -34,13 +34,13 @@ Sistema automatizado de clasificación de cajas en una cinta transportadora. El 
 |------------|-------------|------------|---------|
 | HC-SR04 TRIG | D9 | PB1 | Pulso de disparo |
 | HC-SR04 ECHO | D10 | PB2 | Recepción del eco |
-| IR0 (remapeado) | D4 | PD4 | Zona de medición (compartido con IR2) |
-| IR1 | D3 | PD3 | Posición pateador 1 |
-| IR2 | D4 | PD4 | Posición pateador 2 (comparte con IR0) |
-| IR3 | D5 | PD5 | Posición pateador 3 (sin montar) |
+| IR0 | D5 | PD5 | Zona de medición |
+| IR1 | D2 | PD2 | Posición pateador 1 |
+| IR2 | D3 | PD3 | Posición pateador 2 |
+| IR3 | D4 | PD4 | Posición pateador 3 |
 | SERVO1 | D7 | PD7 | Eyector caja pequeña |
-| SERVO2 | D12 | PB4 | Eyector caja mediana |
-| SERVO3 | D11 | PB3 | Eyector caja grande |
+| SERVO2 | D11 | PB3 | Eyector caja mediana |
+| SERVO3 | D12 | PB4 | Eyector caja grande |
 | LED builtin | D13 | PB5 | Heartbeat (toggle cada 100 ms) |
 
 > **Alimentación servos:** los SG90 requieren ~500 mA. El USB del Arduino es insuficiente para los tres simultáneos — usar fuente externa de 5V con GND común.
@@ -96,17 +96,15 @@ TP4 Microcontroladores/
                     │                                          │
        ┌────────────┼────────────┐                             │
        │            │            │                             │
-  BOX_SMALL    BOX_MEDIUM    BOX_BIG (*)                       │
-       │            │                                          │
-       ▼            ▼                                          │
-  CS_PUSHER1   CS_PUSHER2                                      │
-  IR1 / timer  IR2 / timer                                     │
-       │            │                                          │
-       └─────┬──────┘                                          │
+  BOX_SMALL    BOX_MEDIUM    BOX_SMALL    BOX_MEDIUM    BOX_BIG
+       │            │            │                             │
+       ▼            ▼            ▼                             │
+  CS_PUSHER1   CS_PUSHER2   CS_PUSHER3                         │
+  IR1 / timer  IR2 / timer  timer (IR3 en PD2)                 │
+       │            │            │                             │
+       └─────┬──────────────────┘                              │
              │  SERVO PUSH 500ms → HOME                        │
              └─────────────────────────────────────────────────┘
-
-(*) CS_PUSHER3 deshabilitado hasta montar IR3
 ```
 
 **Modos de operación (configurables desde la GUI):**
@@ -192,8 +190,7 @@ Desarrollada en Qt 6. Toda la UI se construye por código en `buildUI()` (sin `.
 ## Pendientes
 
 - [ ] **Calibrar distancia de referencia** — medir distancia real sensor→cinta en el banco y configurar via GUI o hardcodear en `CLASSIFIER.c`
-- [ ] **Montar IR0 en PD2** — actualmente IR0 comparte PD4 con IR2; cuando se instale el sensor físico en PD2, actualizar `ir_pin[IR_ID_0]` en `IR.c`
-- [ ] **Montar IR3 en PD5 y habilitar CS_PUSHER3** — agregar la transición `BOX_BIG → CS_PUSHER3` en CS_MEASURE (actualmente comentada)
+- [ ] **Habilitar IR3 en lógica del pateador 3** — IR3 ya está mapeado a PD2; falta que el bloque Pusher3 lo use en Modo Normal además del timer
 - [ ] **Alimentación externa para servos** — fuente 5V/1A externa con GND común al Arduino
 - [ ] **Enviar CMD_BOX_CLASSIF (0xA2)** — el tipo clasificado se calcula pero no se envía a la GUI
 

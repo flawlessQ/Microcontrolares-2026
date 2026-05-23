@@ -1,13 +1,23 @@
 /*
   TIMERS.c
- 
-  Inicializaci�n de los timers:
-  - TIMER0.
-  - TIMER1.
-  - TIMER2.
+
+  Inicializaci�n de los timers del ATmega328P.
+  - TIMER0: modo CTC, prescaler 64, OCR0A=249 -> interrupci�n cada 1ms.
+  - TIMER1: modo CTC, prescaler 64, OCR1A=249 -> interrupci�n cada 1ms.
+  - TIMER2: modo CTC, prescaler 8,  OCR2A=1   -> flag cada 1us (polling).
 */
 
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|													INCLUDES			                                             |
+//|__________________________________________________________________________________________________________________|
+
 #include "TIMERS.h"	// Se incluye el archivo de cabecera propio.
+
+// __________________________________________________________________________________________________________________
+//|                                                                                                                  |
+//|											C�DIGO DE FUNCIONES			                                             |
+//|__________________________________________________________________________________________________________________|
 
 void ini_TIMER2 ()
 {
