@@ -49,15 +49,38 @@ QComboBox {
     border-radius: 5px;
     padding: 4px 8px;
     background: white;
+    color: #2D3748;
     min-height: 26px;
 }
-QComboBox::drop-down { border: none; }
+QComboBox::drop-down { border: none; width: 20px; }
+QComboBox QAbstractItemView {
+    background: white;
+    color: #2D3748;
+    selection-background-color: #EBF8FF;
+}
 QSpinBox {
     border: 1px solid #CBD5E0;
     border-radius: 4px;
-    padding: 4px 6px;
+    padding: 2px 6px;
     background: white;
-    min-height: 24px;
+    color: #2D3748;
+}
+QSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 18px;
+    border-left: 1px solid #CBD5E0;
+    background: #EDF2F7;
+}
+QSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 18px;
+    border-left: 1px solid #CBD5E0;
+    background: #EDF2F7;
+}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+    background: #CBD5E0;
 }
 QPlainTextEdit {
     background-color: #1A202C;
@@ -68,6 +91,7 @@ QPlainTextEdit {
     border: none;
     padding: 6px;
 }
+QLabel       { color: #2D3748; background: transparent; }
 QRadioButton { font-weight: normal; color: #2D3748; spacing: 6px; }
 QLCDNumber   { background-color: #1A202C; border-radius: 4px; }
 )";
@@ -259,25 +283,25 @@ void MainWindow::buildUI()
     lblUmbrales->setStyleSheet("font-weight: bold; background: transparent;");
     cfgLayout->addWidget(lblUmbrales);
 
-    QGridLayout *threshGrid = new QGridLayout();
-    threshGrid->setSpacing(5);
-    auto makeThresh = [&](const QString &lbl, QSpinBox *&spin, int row) {
-        QLabel *l = new QLabel(lbl);
-        l->setStyleSheet("background: transparent;");
-        threshGrid->addWidget(l, row, 0);
+    auto addThreshRow = [&](const QString &lbl, QSpinBox *&spin, int val) {
         spin = new QSpinBox();
         spin->setRange(1, 30);
         spin->setSuffix(" cm");
-        spin->setMinimumWidth(80);
-        threshGrid->addWidget(spin, row, 1);
+        spin->setValue(val);
+        spin->setFixedSize(90, 28);
+        QHBoxLayout *row = new QHBoxLayout();
+        row->setSpacing(8);
+        row->setContentsMargins(0, 2, 0, 2);
+        QLabel *l = new QLabel(lbl);
+        l->setFixedWidth(62);
+        row->addWidget(l);
+        row->addWidget(spin);
+        row->addStretch();
+        cfgLayout->addLayout(row);
     };
-    makeThresh("Pequeña:",  spinSmall,  0);
-    makeThresh("Mediana:",  spinMedium, 1);
-    makeThresh("Grande:",   spinBig,    2);
-    spinSmall->setValue(6);
-    spinMedium->setValue(8);
-    spinBig->setValue(10);
-    cfgLayout->addLayout(threshGrid);
+    addThreshRow("Pequeña:",  spinSmall,  6);
+    addThreshRow("Mediana:",  spinMedium, 8);
+    addThreshRow("Grande:",   spinBig,    10);
 
     QHBoxLayout *refRow = new QHBoxLayout();
     QLabel *lblRef = new QLabel("Dist. referencia:");
@@ -287,7 +311,8 @@ void MainWindow::buildUI()
     spinRefDist->setRange(5, 50);
     spinRefDist->setSuffix(" cm");
     spinRefDist->setValue(20);
-    spinRefDist->setMinimumWidth(80);
+    spinRefDist->setMinimumWidth(90);
+    spinRefDist->setFixedHeight(30);
     refRow->addWidget(spinRefDist);
     refRow->addStretch();
     cfgLayout->addLayout(refRow);

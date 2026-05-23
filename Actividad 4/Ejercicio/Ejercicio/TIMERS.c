@@ -1,7 +1,7 @@
 /*
   TIMERS.c
  
-  Inicialización de los timers:
+  Inicializaciï¿½n de los timers:
   - TIMER0.
   - TIMER1.
   - TIMER2.
@@ -11,7 +11,7 @@
 
 void ini_TIMER2 ()
 {
-// En esta función se modifica un timer para que pueda generar un evento cada 1us, no bloquente y sin interrupciones, utilizando el TIMER2 en modo CTC.
+// En esta funciï¿½n se modifica un timer para que pueda generar un evento cada 1us, no bloquente y sin interrupciones, utilizando el TIMER2 en modo CTC.
 
 	TCNT2 = 0;		// Seteo en 0 el registro "TCNT2".
 
@@ -25,7 +25,7 @@ void ini_TIMER2 ()
    |  0  |  1  |  0  |CTC               |
    |  0  |  1  |  1  |FAST PWM          |
     ------------------------------------
-   Se prefiere utilizar el modo CTC ya que nos permite una mejor precisión en el timer para 1us. */
+   Se prefiere utilizar el modo CTC ya que nos permite una mejor precisiï¿½n en el timer para 1us. */
 
 	TCCR2A = TCCR2A;			// Limpio el registro "TCCR2A" antes de comenzar.
 	TCCR2B = TCCR2B;			// Limpio el registro "TCCR2B" antes de comenzar.
@@ -64,17 +64,17 @@ void ini_TIMER2 ()
 
 	TCCR2B |= (1 << CS21);	// En TCCR2B pongo el bit de CS21 en 1.
 
-// Como se mencionó anteriormente, se debe establecer un OCR2A en 2.
+// Como se mencionï¿½ anteriormente, se debe establecer un OCR2A en 2.
 	
-	OCR2A = 2;	 // Se establece el valor para OCR2A.
+	OCR2A = 1;	 // Se establece el valor para OCR2A. (1 -> 2 ticks x 0.5us = 1us exacto)
 
-// De este modo TIMER2 hará: 0 -> 1 -> 2.
+// De este modo TIMER2 harï¿½: 0 -> 1 -> 2.
 
 }
 
 void ini_TIMER1 ()
 {
-// En esta función se modifica un timer para que pueda generar un evento cada 1ms, no bloquente y con interrupciones, utilizando el TIMER1 en modo CTC.
+// En esta funciï¿½n se modifica un timer para que pueda generar un evento cada 1ms, no bloquente y con interrupciones, utilizando el TIMER1 en modo CTC.
 
 //Considerando que es un timer de 16 bits, para setear el contador TCNT1 hay que hacerlo en su parte alta (high) y en su parte baja (low).
 	
@@ -93,7 +93,7 @@ void ini_TIMER1 ()
    |  1  |  0  |  0  |  0  |FREQUENCY & PHASE CORRECT|
     -------------------------------------------------
 
-   Se prefiere utilizar el modo CTC ya que nos permite una mejor precisión en el timer para 1ms. */
+   Se prefiere utilizar el modo CTC ya que nos permite una mejor precisiï¿½n en el timer para 1ms. */
 
 	TCCR1A = TCCR1A;			// Limpio el registro "TCCR1A" antes de comenzar.
 	TCCR1B = TCCR1B;			// Limpio el registro "TCCR1B" antes de comenzar.
@@ -114,7 +114,7 @@ void ini_TIMER1 ()
 
 	TCCR1B |= (1 << CS11) | (1 << CS10);	// Activo los bits de las banderas CS11 y CS10 del registro TCCR1B.
 
-/* Para realizar la interrupción de 1ms definimos el prescaler en 64 (clk 64) y siendo 16MHz la frecuencia del cristal del microcontrolador (F_CPU).
+/* Para realizar la interrupciï¿½n de 1ms definimos el prescaler en 64 (clk 64) y siendo 16MHz la frecuencia del cristal del microcontrolador (F_CPU).
    Luego se resuelve la siguientes ecuaciones:
 	 ______________________________
 	|							   |
@@ -131,15 +131,15 @@ void ini_TIMER1 ()
 	|	OCR1A = 249                |
 	|______________________________|
 */
-// Como se mencionó anteriormente, se debe establecer un OCR1A en 249. Debe de hacerse en su parte alta (high) y en su parte baja (low).
+// Como se mencionï¿½ anteriormente, se debe establecer un OCR1A en 249. Debe de hacerse en su parte alta (high) y en su parte baja (low).
 
-	OCR1AH = (uint8_t)(249 >> 8);		// Se guardan los bits más significativos en el registro OCR1AH.
+	OCR1AH = (uint8_t)(249 >> 8);		// Se guardan los bits mï¿½s significativos en el registro OCR1AH.
 	OCR1AL = (uint8_t)(249 & 0xFF);		// Se guardan los bits menos significativos en el registro OCR1AL.
 
-// De este modo TIMER1 hará: 0 -> 1 -> 2 -> 3 -> ... -> 249 .
+// De este modo TIMER1 harï¿½: 0 -> 1 -> 2 -> 3 -> ... -> 249 .
 
-/* Se debe permitir la interrupción que sucederá durante cada comparación.
-   Para que suceda la interrupción, se debe de activar la bandera "OCIE1A" situada en el registro "TIMSK1".
+/* Se debe permitir la interrupciï¿½n que sucederï¿½ durante cada comparaciï¿½n.
+   Para que suceda la interrupciï¿½n, se debe de activar la bandera "OCIE1A" situada en el registro "TIMSK1".
    El registro "TIMSK1" es un registro que gestiona interrupciones para determinados eventos.
 */
 	
@@ -149,7 +149,7 @@ void ini_TIMER1 ()
 
 void ini_TIMER0 ()
 {
-// En esta función se modifica un timer para que pueda generar un evento cada 1ms, no bloquente y con interrupciones, utilizando el TIMER0 en modo CTC.
+// En esta funciï¿½n se modifica un timer para que pueda generar un evento cada 1ms, no bloquente y con interrupciones, utilizando el TIMER0 en modo CTC.
 
 	TCNT0 = 0;		// Seteo en 0 el registro "TCNT0".
 
@@ -163,14 +163,14 @@ void ini_TIMER0 ()
    |  0  |  1  |  0  |CTC               |
    |  0  |  1  |  1  |FAST PWM          |
     ------------------------------------
-   Se prefiere utilizar el modo CTC ya que nos permite una mejor precisión en el timer para 1ms. */
+   Se prefiere utilizar el modo CTC ya que nos permite una mejor precisiï¿½n en el timer para 1ms. */
 
 	TCCR0A = TCCR0A;			// Limpio el registro "TCCR1A" antes de comenzar.
 	TCCR0B = TCCR0B;			// Limpio el registro "TCCR1B" antes de comenzar.
 
 	TCCR0A |= (1 << WGM01);		// En TCCR0A pongo el bit de WGM01 en 1.
 
-/* Para realizar la interrupción de 1ms definimos el prescaler en 64 (clk 64) y siendo 16MHz la frecuencia del cristal del microcontrolador.
+/* Para realizar la interrupciï¿½n de 1ms definimos el prescaler en 64 (clk 64) y siendo 16MHz la frecuencia del cristal del microcontrolador.
    Luego se resuelve la siguientes ecuaciones:
 	 ______________________________
 	|							   |
@@ -202,14 +202,14 @@ void ini_TIMER0 ()
 
 	TCCR0B |= (1 << CS01) | (1 << CS00);	// En TCCR0B pongo los bits de CS01 y CS00 en 1.
 
-// Como se mencionó anteriormente, se debe establecer un OCR0A en 249.
+// Como se mencionï¿½ anteriormente, se debe establecer un OCR0A en 249.
 	
 	OCR0A = 249;	 // Se establece el valor para OCR0A.
 
-// De este modo TIMER0 hará: 0 -> 1 -> 2 -> 3 -> ... -> 249
+// De este modo TIMER0 harï¿½: 0 -> 1 -> 2 -> 3 -> ... -> 249
 
-/* Se debe permitir la interrupción que sucederá durante cada comparación.
-   Para que suceda la interrupción, se debe de activar la bandera "OCIE0A" situada en el registro "TIMSK0".
+/* Se debe permitir la interrupciï¿½n que sucederï¿½ durante cada comparaciï¿½n.
+   Para que suceda la interrupciï¿½n, se debe de activar la bandera "OCIE0A" situada en el registro "TIMSK0".
    El registro "TIMSK0" es un registro que gestiona interrupciones para determinados eventos.
 */
 	

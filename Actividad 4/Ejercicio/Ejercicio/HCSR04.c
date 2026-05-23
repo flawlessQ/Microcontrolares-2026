@@ -1,223 +1,102 @@
 /*
   HCSR04.c
- 
+
   Driver portable para el sensor HC-SR04.
-  No depende directamente del hardware del microcontrolador.
+  No accede directamente a registros del microcontrolador.
+  Las operaciones de hardware se realizan mediante punteros a función.
 */
 
-#include "HCSR04.h"   // Se incluye el archivo de cabecera propio del driver.
+#include "HCSR04.h"
 
 /*
    Constantes privadas del driver.
-   Se usan internamente para controlar tiempos y conversión de distancia.
+
+   Esta versión mide el pulso ECHO usando un timer de hardware pasado
+   desde el main mediante punteros a función.
+
+   Supuesto usado para las constantes en ticks:
+   - F_CPU = 16 MHz
+   - Timer usado con prescaler 8
+   - Frecuencia del timer = 2 MHz
+   - 1 tick = 0,5 us
+
+   Por lo tanto:
+   - 10 us = 20 ticks
+   - 30000 us = 60000 ticks
+   - 58 us/cm = 116 ticks/cm
 */
-#define HCSR04_TRIG_TIME_US     10u     // Tiempo que el pin TRIG debe permanecer en nivel alto para disparar el sensor.
-#define HCSR04_PERIOD_MS        250u	// Periodo mínimo entre mediciones del Echo.
-#define HCSR04_ECHO_TIMEOUT_US  30000u  // Tiempo máximo de espera de respuesta del sensor, expresado en microsegundos (30 ms).
-#define HCSR04_CM_DIVISOR       58      // Divisor usado para convertir el ancho del pulso ECHO en distancia.
-                                        // Según esta fórmula:
-                                        //      distancia_cm = tiempo_us / 58
+
+#define HCSR04_PERIOD_MS              250u
+
+#define HCSR04_TRIG_TIME_TICKS        20u
+#define HCSR04_ECHO_TIMEOUT_TICKS     60000u
+#define HCSR04_CM_DIVISOR_TICKS       116u
 
 void HCSR04_Init(_sHCSR04 *sensor, _sHCSR04_IO *io)
 {
-	// Copio la interfaz de hardware dentro de la estructura del sensor.
-	// De esta forma el driver puede usar las funciones para manejar TRIG y leer ECHO
-	// sin depender directamente de los registros del microcontrolador.
+	// Copio la interfaz de hardware dentro del driver.
 	sensor->io = *io;
 
-	// Dejo el sensor en estado inicial, sin ninguna medición en curso.
+	// Dejo el sensor en reposo.
 	sensor->state = HCSR04_IDLE;
 
-	// Inicializo el contador de microsegundos en cero.
-	// Este contador se va a usar para el pulso de TRIG y para medir el tiempo de ECHO.
+	// Limpio variables internas.
 	sensor->counter_us = 0;
-
-	// Cargo el período en el valor máximo para permitir que la primera medición
-	// pueda arrancar inmediatamente, sin esperar los 60 ms iniciales.
 	sensor->period_ms = HCSR04_PERIOD_MS;
 
-	// Limpio el tiempo medido del pulso ECHO.
 	sensor->echo_time_us = 0;
-
-	// Limpio la distancia calculada.
 	sensor->distance_cm = 0;
 
-	// Dejo la distancia máxima en cero porque este valor depende del montaje físico
-	// y se configura después desde el main.
+	// La distancia máxima depende del montaje físico y se configura desde el main.
 	sensor->max_distance_cm = 0;
 
-	// Limpio la bandera de dato listo.
-	sensor->GRHCSR04 &= ~(1 << RDY0);
+	// Limpio todas las banderas.
+	sensor->GRHCSR04 = 0;
 
-	// Limpio la bandera de error.
-	sensor->GRHCSR04 &= ~(1 << ERR0);
-
-	// Limpio la bandera de objeto detectado.
-	sensor->GRHCSR04 &= ~(1 << ODS0);
-
-	// Me aseguro de que el pin TRIG arranque en bajo.
+	// Me aseguro de que TRIG arranque en bajo.
 	sensor->io.trig_write(0);
+
+	// Dejo el timer detenido y en cero.
+	sensor->io.timer_stop();
+	sensor->io.timer_reset();
 }
 
 void HCSR04_Start(_sHCSR04 *sensor)
 {
-	// Solo permito iniciar una nueva medición si el sensor está en reposo,
-	// si terminó una medición anterior o si quedó en timeout.
-	// Si está en otro estado, significa que todavía hay una medición en curso.
-	if(sensor->state != HCSR04_IDLE &&
-	sensor->state != HCSR04_DONE &&
-	sensor->state != HCSR04_TIMEOUT)
-	{
-		return;
-	}
+	/*
+	   Esta función se conserva por compatibilidad con la estructura anterior.
 
-	// Verifico que haya pasado el tiempo mínimo entre mediciones.
-	// Esto evita disparar el sensor demasiado rápido.
-	if(sensor->period_ms < HCSR04_PERIOD_MS)
-	{
-		return;
-	}
+	   En esta versión, la medición real se hace con HCSR04_Measure(),
+	   porque necesitamos capturar el pulso ECHO completo usando el timer
+	   de hardware.
+	*/
 
-	// Reinicio el contador de microsegundos para comenzar una medición nueva.
-	sensor->counter_us = 0;
-
-	// Limpio el tiempo de ECHO anterior.
-	sensor->echo_time_us = 0;
-
-	// Limpio la distancia anterior.
-	sensor->distance_cm = 0;
-
-	// Limpio la bandera de medición lista.
-	sensor->GRHCSR04 &= ~(1 << RDY0);
-
-	// Limpio la bandera de error.
-	sensor->GRHCSR04 &= ~(1 << ERR0);
-
-	// Limpio la bandera de objeto detectado.
-	sensor->GRHCSR04 &= ~(1 << ODS0);
-
-	// Reinicio el contador de milisegundos para volver a contar el período
-	// mínimo antes de permitir otra medición.
-	sensor->period_ms = 0;
-
-	// Pongo TRIG en alto para iniciar el pulso de disparo del HC-SR04.
-	sensor->io.trig_write(1);
-
-	// Cambio al estado donde se controla que el pulso TRIG dure 10 us.
-	sensor->state = HCSR04_TRIG;
-}
-
-void HCSR04_On1us(_sHCSR04 *sensor)
-{
-	// Solo incremento el contador de microsegundos cuando el sensor está
-	// en una etapa donde realmente necesita medir tiempo.
-	if(sensor->state == HCSR04_TRIG ||
-	sensor->state == HCSR04_WAIT_ECHO_HIGH ||
-	sensor->state == HCSR04_WAIT_ECHO_LOW)
-	{
-		// Limito el contador para evitar que se desborde.
-		// Si llega al timeout, deja de incrementarse.
-		if(sensor->counter_us < HCSR04_ECHO_TIMEOUT_US)
-		{
-			sensor->counter_us++;
-		}
-	}
+	HCSR04_Measure(sensor);
 }
 
 void HCSR04_Update(_sHCSR04 *sensor)
 {
-	// Máquina de estados principal del driver.
-	// Según el estado actual, se realiza la acción correspondiente.
-	switch(sensor->state)
-	{
-		case HCSR04_IDLE:
-		// Estado de reposo. No hay medición en curso.
-		break;
+	/*
+	   Esta función se conserva por compatibilidad con la estructura anterior.
 
-		case HCSR04_TRIG:
+	   En esta versión no se usa la máquina de estados anterior para medir,
+	   porque esa lógica podía perder el pulso ECHO si el while principal
+	   tardaba demasiado en volver a llamar a Update().
+	*/
 
-		// Mantengo TRIG en alto hasta que se cumplan los 10 us necesarios.
-		if(sensor->counter_us >= HCSR04_TRIG_TIME_US)
-		{
-			// Bajo el TRIG para finalizar el pulso de disparo.
-			sensor->io.trig_write(0);
+	(void)sensor;
+}
 
-			// Reinicio el contador para empezar a medir la espera del ECHO.
-			sensor->counter_us = 0;
+void HCSR04_On1us(_sHCSR04 *sensor)
+{
+	/*
+	   Esta función se conserva por compatibilidad.
 
-			// Paso al estado donde espero que ECHO suba a nivel alto.
-			sensor->state = HCSR04_WAIT_ECHO_HIGH;
-		}
+	   Ya no se usa para medir el ECHO, porque el ancho del pulso lo mide
+	   directamente el timer de hardware.
+	*/
 
-		break;
-
-		case HCSR04_WAIT_ECHO_HIGH:
-
-		// Espero a que el pin ECHO pase a nivel alto.
-		if(sensor->io.echo_read())
-		{
-			// Cuando ECHO sube, reinicio el contador para medir cuánto tiempo
-			// permanece en alto.
-			sensor->counter_us = 0;
-
-			// Paso al estado donde se mide el ancho del pulso ECHO.
-			sensor->state = HCSR04_WAIT_ECHO_LOW;
-		}
-		else if(sensor->counter_us >= HCSR04_ECHO_TIMEOUT_US)
-		{
-			// Si ECHO nunca sube dentro del tiempo máximo, marco error.
-			sensor->GRHCSR04 |= (1 << ERR0);
-
-			// Paso al estado de timeout.
-			sensor->state = HCSR04_TIMEOUT;
-		}
-
-		break;
-
-		case HCSR04_WAIT_ECHO_LOW:
-
-		// En este estado ECHO ya está en alto.
-		// Espero a que vuelva a bajo para saber que terminó la medición.
-		if(!sensor->io.echo_read())
-		{
-			// Guardo cuánto tiempo estuvo ECHO en alto.
-			sensor->echo_time_us = sensor->counter_us;
-
-			// Calculo la distancia en centímetros usando el divisor definido.
-			sensor->distance_cm = sensor->echo_time_us / HCSR04_CM_DIVISOR;
-
-			// Marco que ya hay una medición lista para ser leída.
-			sensor->GRHCSR04 |= (1 << RDY0);
-
-			// Paso al estado de medición terminada correctamente.
-			sensor->state = HCSR04_DONE;
-		}
-		else if(sensor->counter_us >= HCSR04_ECHO_TIMEOUT_US)
-		{
-			// Si ECHO queda en alto demasiado tiempo, marco error.
-			sensor->GRHCSR04 |= (1 << ERR0);
-
-			// Paso al estado de timeout.
-			sensor->state = HCSR04_TIMEOUT;
-		}
-
-		break;
-
-		case HCSR04_DONE:
-		// La medición terminó correctamente.
-		// El driver queda esperando que se inicie una nueva medición.
-		break;
-
-		case HCSR04_TIMEOUT:
-		// Hubo un timeout.
-		// El driver queda esperando que se inicie una nueva medición.
-		break;
-
-		default:
-		// Si por algún motivo el estado no es válido, vuelvo a IDLE.
-		sensor->state = HCSR04_IDLE;
-		break;
-	}
+	(void)sensor;
 }
 
 void HCSR04_On1ms(_sHCSR04 *sensor)
@@ -229,37 +108,170 @@ void HCSR04_On1ms(_sHCSR04 *sensor)
 	}
 }
 
+void HCSR04_Measure(_sHCSR04 *sensor)
+{
+	uint16_t ticks = 0;
+
+	// Solo permito medir si ya pasó el período mínimo entre mediciones.
+	if(sensor->period_ms < HCSR04_PERIOD_MS)
+	{
+		return;
+	}
+
+	// Limpio datos anteriores.
+	sensor->counter_us = 0;
+	sensor->echo_time_us = 0;
+	sensor->distance_cm = 0;
+
+	// Limpio banderas anteriores.
+	sensor->GRHCSR04 &= ~(1 << RDY0);
+	sensor->GRHCSR04 &= ~(1 << ERR0);
+	sensor->GRHCSR04 &= ~(1 << ODS0);
+
+	// Reinicio el período entre mediciones.
+	sensor->period_ms = 0;
+
+	// Estado inicial de medición.
+	sensor->state = HCSR04_TRIG;
+
+	/*
+	   Genero el pulso TRIG de 10 us usando el timer de hardware.
+
+	   El driver no sabe qué timer usa el micro.
+	   Solo pide:
+	   - resetear timer
+	   - arrancar timer
+	   - leer ticks
+	*/
+
+	sensor->io.trig_write(0);
+
+	sensor->io.timer_reset();
+	sensor->io.timer_start();
+
+	sensor->io.trig_write(1);
+
+	while(sensor->io.timer_get_ticks() < HCSR04_TRIG_TIME_TICKS)
+	{
+		// Espero hasta completar el pulso de 10 us.
+	}
+
+	sensor->io.trig_write(0);
+
+	/*
+	   Espero a que ECHO suba.
+	   Si no sube antes del timeout, marco error.
+	*/
+
+	sensor->state = HCSR04_WAIT_ECHO_HIGH;
+
+	sensor->io.timer_reset();
+
+	while(!sensor->io.echo_read())
+	{
+		if(sensor->io.timer_get_ticks() >= HCSR04_ECHO_TIMEOUT_TICKS)
+		{
+			sensor->io.timer_stop();
+
+			sensor->GRHCSR04 |= (1 << ERR0);
+			sensor->state = HCSR04_TIMEOUT;
+
+			return;
+		}
+	}
+
+	/*
+	   Cuando ECHO sube, reinicio el timer.
+	   Desde este momento empiezo a medir el ancho real del pulso ECHO.
+	*/
+
+	sensor->state = HCSR04_WAIT_ECHO_LOW;
+
+	sensor->io.timer_reset();
+
+	while(sensor->io.echo_read())
+	{
+		if(sensor->io.timer_get_ticks() >= HCSR04_ECHO_TIMEOUT_TICKS)
+		{
+			sensor->io.timer_stop();
+
+			sensor->GRHCSR04 |= (1 << ERR0);
+			sensor->state = HCSR04_TIMEOUT;
+
+			return;
+		}
+	}
+
+	// Cuando ECHO baja, leo la duración medida por el timer.
+	ticks = sensor->io.timer_get_ticks();
+
+	// Detengo el timer porque ya terminó la medición.
+	sensor->io.timer_stop();
+
+	// Guardo el tiempo aproximado en microsegundos.
+	// Con prescaler 8, cada tick equivale a 0,5 us.
+	sensor->echo_time_us = ticks / 2;
+
+	// Calculo distancia en centímetros.
+	// Como 1 cm equivale aproximadamente a 58 us:
+	// 58 us * 2 ticks/us = 116 ticks/cm.
+	sensor->distance_cm = ticks / HCSR04_CM_DIVISOR_TICKS;
+
+	// Evalúo si la distancia medida corresponde a un objeto válido.
+	if(sensor->max_distance_cm > 0)
+	{
+		if(sensor->distance_cm <= sensor->max_distance_cm)
+		{
+			sensor->GRHCSR04 |= (1 << ODS0);
+		}
+		else
+		{
+			sensor->GRHCSR04 &= ~(1 << ODS0);
+		}
+	}
+	else
+	{
+		sensor->GRHCSR04 &= ~(1 << ODS0);
+	}
+
+	// Marco que hay una medición lista.
+	sensor->GRHCSR04 |= (1 << RDY0);
+
+	// Estado final correcto.
+	sensor->state = HCSR04_DONE;
+}
+
 uint8_t HCSR04_IsReady(_sHCSR04 *sensor)
 {
 	// Devuelvo 1 si está activa la bandera de medición lista.
-	// Devuelvo 0 si todavía no hay dato nuevo.
 	return (sensor->GRHCSR04 & (1 << RDY0)) ? 1 : 0;
 }
 
 uint8_t HCSR04_HasError(_sHCSR04 *sensor)
 {
 	// Devuelvo 1 si está activa la bandera de error.
-	// Devuelvo 0 si no hubo error.
 	return (sensor->GRHCSR04 & (1 << ERR0)) ? 1 : 0;
 }
 
 uint16_t HCSR04_GetDistanceCm(_sHCSR04 *sensor)
 {
-	sensor->GRHCSR04 &= ~(1 << RDY0); 	// Limpio la bandera de dato listo porque la distancia ya va a ser leída.
+	// Limpio la bandera de dato listo porque la distancia ya va a ser leída.
+	sensor->GRHCSR04 &= ~(1 << RDY0);
 
-	return sensor->distance_cm;			// Devuelvo la última distancia calculada en centímetros.
+	// Devuelvo la última distancia calculada en centímetros.
+	return sensor->distance_cm;
 }
 
 uint8_t HCSR04_IsObjectDetected(_sHCSR04 *sensor)
 {
-	// Devuelvo 1 si está activa la bandera de objeto detectado.
-	// Devuelvo 0 si no se detectó un objeto válido.
+	// Devuelvo 1 si la última medición está dentro de la distancia máxima configurada.
 	return (sensor->GRHCSR04 & (1 << ODS0)) ? 1 : 0;
 }
 
 void HCSR04_SetMaxDistanceCm(_sHCSR04 *sensor, uint16_t distance_cm)
 {
 	// Guardo la distancia máxima válida.
-	// Este valor no lo define el driver porque depende del montaje físico.
+	// Este valor depende del montaje físico y se define desde el main.
 	sensor->max_distance_cm = distance_cm;
 }
+

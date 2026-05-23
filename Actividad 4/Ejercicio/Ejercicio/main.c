@@ -107,8 +107,12 @@ void Heartbeat();						// Funci�n de control del heartbeat.
 void decodeCMD();						// Funci�n que decodifica el comando recibido.
 
 
-void HCSR04_TrigWrite(uint8_t level);	// Funci�n que activa el sensor HCSR04 para las lecturas.
-uint8_t HCSR04_EchoRead();				// Funci�n que lee los pulsos recibidos por el sensor HCSR04. 
+void HCSR04_TrigWrite(uint8_t level);
+uint8_t HCSR04_EchoRead(void);
+void    HCSR04_TimerReset(void);
+void    HCSR04_TimerStart(void);
+void    HCSR04_TimerStop(void);
+uint16_t HCSR04_TimerGetTicks(void);
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
@@ -127,8 +131,12 @@ _sHCSR04 sensor;
 
 _sHCSR04_IO sensor_io =
 {
-	.trig_write = HCSR04_TrigWrite,
-	.echo_read = HCSR04_EchoRead
+	.trig_write      = HCSR04_TrigWrite,
+	.echo_read       = HCSR04_EchoRead,
+	.timer_reset     = HCSR04_TimerReset,
+	.timer_start     = HCSR04_TimerStart,
+	.timer_stop      = HCSR04_TimerStop,
+	.timer_get_ticks = HCSR04_TimerGetTicks
 };
 
 uint8_t d_cm;				// Distancia medida por el sensor.
@@ -182,12 +190,8 @@ void ini_GPIOs ()
 	DDRB |= (1 << LEDBUILTIN);										// Defino el pin correspondiente al led builtin (PINB5) como salida. 
 	DDRB |= (1 << TRIGGER) | (1 << SERVO3) | (1 << SERVO2);			// Defino los pines correspondientes DE PINB como salidas.
 	DDRB &= ~(1 << ECHO);											// Establezco los pines correspondientes de PINB como entradas.
-	PORTB |= (1 << ECHO);											// Pull-up en ECHO: evita flotacion cuando no hay sensor conectado.
+	PORTB &= ~(1 << ECHO);											// Sin pull-up: el HC-SR04 maneja ECHO activamente.
 	DDRD |= (1 << SERVO1);											// Establezco los pines correspondientes de PIND como salidas.
-	DDRD  &= ~(1 << BTN_SMALL);									// D6 como entrada.
-	PORTD &= ~(1 << BTN_SMALL);									// Pull-up interno desactivado (se usa pull-down externo).
-	DDRB  &= ~(1 << BTN_MEDIUM);								// D8 como entrada.
-	PORTB &= ~(1 << BTN_MEDIUM);								// Pull-up interno desactivado (se usa pull-down externo).
 }
 
 void On1ms ()
@@ -205,21 +209,15 @@ void On1ms ()
 	if (est_delay_timer > 0)
 		est_delay_timer--;
 
-	HCSR04_On1ms(&sensor);		// Inicio el contador interno de 1ms del sensor HCSR04.
-	
+	HCSR04_On1ms(&sensor);
+	IR_UpdateDebounce();
+
 	GPIOR0 &= ~(1 << GPIOR00);	// Limpio la bandera "GPIOR00" del registro GPIOR0.
 }
 
 void On1us()
 {
-// En esta funci�n se realizan los eventos correspondientes cada 1us.
-
-	//OCR2A += 2;				// Programo la pr�xima interrupci�n 20 ticks despu�s de la anterior.
-							// En vez de esperar otra vuelta del timer, se programa el pr�ximo evento relativo al actual.
-	
-	HCSR04_On1us(&sensor);  // Inicio el contador interno de 1us del sensor HCSR04.
-	
-	TIFR2 |= (1 << OCF2A);  // Limpio la bandera "OCF2A" correspondiente al registro "TIFR2".
+	TIFR2 |= (1 << OCF2A);
 }
 
 void Heartbeat ()
@@ -249,9 +247,40 @@ void HCSR04_TrigWrite(uint8_t level)
 	PORTB &= ~(1 << TRIGGER);
 }
 
-uint8_t HCSR04_EchoRead()
+uint8_t HCSR04_EchoRead(void)
 {
-	return (PINB & (1 << ECHO)) ? 1 : 0;	
+	return (PINB & (1 << ECHO)) ? 1 : 0;
+}
+
+void HCSR04_TimerReset(void)
+{
+	TCNT1 = 0;
+}
+
+void HCSR04_TimerStart(void)
+{
+	TIMSK1 &= ~(1 << OCIE1A);		// Deshabilita ISR de servo durante la medicion.
+	TCCR1A = 0x00;
+	TCCR1B = (1 << CS11);			// Modo normal, prescaler 8: 1 tick = 0.5us.
+	TCNT1  = 0;
+}
+
+void HCSR04_TimerStop(void)
+{
+	TCCR1B = 0x00;
+	// Restaura Timer1 para el servo: CTC, prescaler 64, OCR1A=249 (1ms).
+	TCCR1A = 0x00;
+	TCCR1B = (1 << WGM12) | (1 << CS11) | (1 << CS10);
+	OCR1AH = 0;
+	OCR1AL = 249;
+	TCNT1H = 0;
+	TCNT1L = 0;
+	TIMSK1 |= (1 << OCIE1A);		// Rehabilita ISR de servo.
+}
+
+uint16_t HCSR04_TimerGetTicks(void)
+{
+	return TCNT1;
 }
 
 void decodeCMD()
@@ -364,9 +393,7 @@ int main(void)
 		{
 			case CS_MEASURE:					// CS_MEASURE: Estado donde se realiza la medicion.
 				
-				HCSR04_Start(&sensor);			// Inicio el sensor HCSR04.
-				
-				HCSR04_Update(&sensor);			// Actualizo la maquina de estados del sensor.
+				HCSR04_Start(&sensor);			// Dispara medicion bloqueante (retorna inmediato si no paso el periodo).
 				
 				if(HCSR04_IsReady(&sensor))		// El sensor esta listo con una medicion nueva.
 				{
@@ -378,41 +405,25 @@ int main(void)
 				   
 				   buildCMD(&stx);				// Armo el mensaje para la transmision.
 				   
-				   if(IR_IsDetected(IR_ID_0))			// Hay una caja en la zona de medicion.
+				   if(HCSR04_IsObjectDetected(&sensor))	// Hay una caja en la zona de medicion.
 				   {
 				   		detected_type = CLASSIFIER_Classify(d_cm);	// Clasifico la caja segun su altura.
 				   		
-				   		if      (detected_type == BOX_BIG)    { state = CS_PUSHER3; est_delay_timer = EST_DELAY_MS; }
-				   		else if (detected_type == BOX_MEDIUM) { state = CS_PUSHER2; est_delay_timer = EST_DELAY_MS; }
+				   		// BOX_BIG: deshabilitado hasta tener IR3 montado.
+				   		if      (detected_type == BOX_MEDIUM) { state = CS_PUSHER2; est_delay_timer = EST_DELAY_MS; }
 				   		else if (detected_type == BOX_SMALL)  { state = CS_PUSHER1; est_delay_timer = EST_DELAY_MS; }
 				   }
 				}
 				
 			   if(HCSR04_HasError(&sensor))		// Ocurrio un error con el sensor.
 			    {
-					stx.cmd = 0xA0;				// Le asigno el comando al mensaje.
-					stx.payloadLen = 0;			// Establezco el tamano del payload.
-					   				   
-					buildCMD(&stx);				// Armo el mensaje para la transmision.
+					sensor.GRHCSR04 &= ~(1 << ERR0);  // Consume la bandera: envia el error solo una vez por ciclo.
+					stx.cmd = 0xA0;
+					stx.payloadLen = 0;
+					buildCMD(&stx);
 				}
 				
 				
-				// Simulacion IR0: boton simula deteccion de caja en zona de medicion.
-				if (!servo_active)
-				{
-					if (BTN_SMALL_PRESSED)
-					{
-						detected_type = BOX_SMALL;		// Simula caja pequena.
-						state = CS_PUSHER1;
-						est_delay_timer = EST_DELAY_MS;
-					}
-					else if (BTN_MEDIUM_PRESSED)
-					{
-						detected_type = BOX_MEDIUM;		// Simula caja mediana.
-						state = CS_PUSHER2;
-						est_delay_timer = EST_DELAY_MS;
-					}
-				}
 			break;
 			
 			case CS_PUSHER1:					// CS_PUSHER1: Una caja pequena debe ser eyectada por SERVO1.
@@ -477,14 +488,7 @@ int main(void)
 			
 			case CS_PUSHER3:					// CS_PUSHER3: Una caja grande debe ser eyectada por SERVO3.
 			
-				if(!servo_active && conv_mode == MODE_NORMAL && IR_IsDetected(IR_ID_3))
-				{
-					SERVO_Set(SERVO_ID_3, SERVO_PUSH);
-					servo_hold_timer = SERVO_HOLD_MS;
-					servo_active = TRUE;
-				}
-
-				if(!servo_active && conv_mode == MODE_ESTIMATED && !est_delay_timer)
+				if(!servo_active && !est_delay_timer)
 				{
 					SERVO_Set(SERVO_ID_3, SERVO_PUSH);
 					servo_hold_timer = SERVO_HOLD_MS;
