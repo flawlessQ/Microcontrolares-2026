@@ -1,0 +1,9 @@
+# Binarios compilados
+Actividad 4/Ejercicio/Ejercicio/Debug/
+
+# Metadata IDE (Microchip Studio / Atmel Studio)
+**/.vs/
+**/*.atsuo
+
+# Datasheet del ATmega (34MB, disponible publicamente)
+ATmega48A-PA-88A-PA-168A-PA-328-P-DS-DS40002061A.pdf
