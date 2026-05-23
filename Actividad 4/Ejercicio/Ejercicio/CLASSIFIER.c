@@ -33,7 +33,8 @@ _eBoxType CLASSIFIER_Classify(uint8_t d_cm)
 
 	if (h >= config.h_big)    return BOX_BIG;
 	if (h >= config.h_medium) return BOX_MEDIUM;
-	return BOX_SMALL;
+	if (h >= config.h_small)  return BOX_SMALL;
+	return BOX_NONE;
 }
 
 void CLASSIFIER_SetThresholds(uint8_t h_small, uint8_t h_medium, uint8_t h_big)

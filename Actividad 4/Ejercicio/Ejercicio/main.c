@@ -59,6 +59,13 @@ typedef enum{
 	CS_PUSHER3, 			// Estado que indica que hay una caja que debe ser empujado por el pateador 3.  
 }_eConveyorState;
 
+#define BOX_QUEUE_SIZE  8u
+
+typedef struct {
+	_eBoxType type;
+	uint16_t  est_timer;	// Cuenta regresiva desde EST_DELAY_MS; 0 = listo para Modo Estimado.
+} _sBoxQueueEntry;
+
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
@@ -77,11 +84,6 @@ typedef enum{
 #define	SERVO1	PIND7	      // Servomotor 1 en el PIND7.
 
 
-#define BTN_SMALL   PIND6	  // Boton simulacion caja pequena  (Arduino D6).
-#define BTN_MEDIUM  PINB0	  // Boton simulacion caja mediana  (Arduino D8).
-
-#define BTN_SMALL_PRESSED   ((PIND) & (1 << BTN_SMALL))	// Activo alto (pull-down externo, boton conecta pin a 5V).
-#define BTN_MEDIUM_PRESSED  ((PINB) & (1 << BTN_MEDIUM))	// Activo alto (pull-down externo, boton conecta pin a 5V).
 
 #define TRUE 1				  // Defino el estado "TRUE" como 1.
 #define FALSE 0				  // Defino el estado "FALSE" como 0.
@@ -124,7 +126,8 @@ uint8_t time100ms = 100;	// Contador auxiliar que se utiliza para indicar cuando
 _sRX srx;					// Variable que contendr� los datos para manejar la recepci�n.
 _sTX stx;					// Variable que contendr� los datos para manejar la transmisi�n.
 		
-_eConveyorState state;		// Variable que contendr� los estados de la cinta transportadora.
+// _eConveyorState state — eliminado: la logica de estado ya no bloquea la medicion.
+//� los estados de la cinta transportadora.
 
 
 _sHCSR04 sensor;
@@ -141,12 +144,15 @@ _sHCSR04_IO sensor_io =
 
 uint8_t d_cm;				// Distancia medida por el sensor.
 
-uint16_t servo_hold_timer = 0;	// Contador de tiempo para mantener el servo en posicion PUSH.
-uint8_t  servo_active     = FALSE;	// Bandera que indica si el servo esta activo.
-_eBoxType  detected_type  = BOX_NONE;	// Tipo de caja detectada por el clasificador.
-uint16_t box_count[4]    = {0, 0, 0, 0};	// Contadores de cajas eyectadas por tipo (_eBoxType).
-uint8_t  conv_mode       = MODE_NORMAL;		// Modo de operacion (0=Normal, 1=Estimado).
-uint16_t est_delay_timer = 0;				// Timer de espera en modo estimado (ms).
+uint16_t servo_hold_timer[3] = {0, 0, 0};	// Hold timer por servo [SERVO_ID_1..3].
+uint8_t  servo_active[3]     = {0, 0, 0};	// Bandera de servo activo por servo.
+uint16_t box_count[4]        = {0, 0, 0, 0};	// Contadores de cajas eyectadas por tipo.
+uint8_t  conv_mode           = MODE_NORMAL;	// Modo de operacion (0=Normal, 1=Estimado).
+
+_sBoxQueueEntry box_queue[BOX_QUEUE_SIZE];	// Cola FIFO de cajas clasificadas.
+uint8_t  queue_head  = 0;
+uint8_t  queue_tail  = 0;
+uint8_t  queue_count = 0;
 
 // __________________________________________________________________________________________________________________
 //|                                                                                                                  |
@@ -183,6 +189,40 @@ ISR(USART_RX_vect)
 //|                                   C�DIGO DE FUNCIONES PROTOT�PO		                                             |
 //|__________________________________________________________________________________________________________________|
 
+// ── Helpers de cola FIFO ──────────────────────────────────────────────────────
+
+static void queue_push(_eBoxType t)
+{
+	if(queue_count < BOX_QUEUE_SIZE)
+	{
+		box_queue[queue_tail].type      = t;
+		box_queue[queue_tail].est_timer = EST_DELAY_MS;
+		queue_tail = (queue_tail + 1) % BOX_QUEUE_SIZE;
+		queue_count++;
+	}
+}
+
+static _eBoxType queue_front_type(void)
+{
+	return (queue_count > 0) ? box_queue[queue_head].type : BOX_NONE;
+}
+
+static uint16_t queue_front_timer(void)
+{
+	return (queue_count > 0) ? box_queue[queue_head].est_timer : 1u;
+}
+
+static void queue_pop(void)
+{
+	if(queue_count > 0)
+	{
+		queue_head = (queue_head + 1) % BOX_QUEUE_SIZE;
+		queue_count--;
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 void ini_GPIOs ()
 {
 // En esta funci�n se inicializan los puertos de entrada y salida.
@@ -203,16 +243,22 @@ void On1ms ()
 	
 	time100ms--;				// Descuento 1 al contador de time10ms.
 	
-	if (servo_hold_timer > 0)
-		servo_hold_timer--;	// Decrementa el temporizador del servo.
+	{
+		uint8_t i;
+		for(i = 0; i < 3; i++)
+			if(servo_hold_timer[i] > 0) servo_hold_timer[i]--;
 
-	if (est_delay_timer > 0)
-		est_delay_timer--;
+		for(i = 0; i < queue_count; i++)
+		{
+			uint8_t idx = (queue_head + i) % BOX_QUEUE_SIZE;
+			if(box_queue[idx].est_timer > 0) box_queue[idx].est_timer--;
+		}
+	}
 
 	HCSR04_On1ms(&sensor);
 	IR_UpdateDebounce();
 
-	GPIOR0 &= ~(1 << GPIOR00);	// Limpio la bandera "GPIOR00" del registro GPIOR0.
+	GPIOR0 &= ~(1 << GPIOR00);
 }
 
 void On1us()
@@ -285,13 +331,18 @@ uint16_t HCSR04_TimerGetTicks(void)
 
 void decodeCMD()
 {
-	uint8_t busy = (state != CS_MEASURE || servo_active);
+	uint8_t busy = servo_active[0] || servo_active[1] || servo_active[2];
+
+	uint8_t reported_state = CS_MEASURE;
+	if(servo_active[2]) reported_state = CS_PUSHER3;
+	if(servo_active[1]) reported_state = CS_PUSHER2;
+	if(servo_active[0]) reported_state = CS_PUSHER1;
 
 	switch (srx.cmd)
 	{
 		case CMD_GET_STATE:
 			stx.cmd        = CMD_STATE;
-			stx.payload[0] = (uint8_t)state;
+			stx.payload[0] = reported_state;
 			stx.payloadLen = 1;
 			buildCMD(&stx);
 		break;
@@ -376,8 +427,6 @@ int main(void)
 	HCSR04_Init(&sensor, &sensor_io);			// Inicio el sensor HCSR04.
 	HCSR04_SetMaxDistanceCm(&sensor, 20);		// Establezco la distancia m�xima a medir.
 	
-	state = CS_MEASURE;
-	
 	sei ();										// Habilito interrupciones globales.
 	
 	while (1)
@@ -389,125 +438,101 @@ int main(void)
 		
 		Heartbeat();							// Secuencia del heartbeat.
 		
-		switch (state)							// Maquina de estado de la cinta transportadora.
+		// ── Medicion: siempre activa, independiente de los servos ──────────
+		if(IR_RisingEdge(IR_ID_0))
 		{
-			case CS_MEASURE:					// CS_MEASURE: Estado donde se realiza la medicion.
-				
-				HCSR04_Start(&sensor);			// Dispara medicion bloqueante (retorna inmediato si no paso el periodo).
-				
-				if(HCSR04_IsReady(&sensor))		// El sensor esta listo con una medicion nueva.
-				{
-				   d_cm = HCSR04_GetDistanceCm(&sensor);	// Medicion obtenida por el HC-SR04.
-				   
-				   stx.cmd = 0xA1;				// Le asigno el comando al mensaje.
-				   stx.payload[0] = d_cm;		// Agrego la distancia medida al payload.
-				   stx.payloadLen = 1;			// Establezco el tamano del payload del mensaje.
-				   
-				   buildCMD(&stx);				// Armo el mensaje para la transmision.
-				   
-				   if(HCSR04_IsObjectDetected(&sensor))	// Hay una caja en la zona de medicion.
-				   {
-				   		detected_type = CLASSIFIER_Classify(d_cm);	// Clasifico la caja segun su altura.
-				   		
-				   		// BOX_BIG: deshabilitado hasta tener IR3 montado.
-				   		if      (detected_type == BOX_MEDIUM) { state = CS_PUSHER2; est_delay_timer = EST_DELAY_MS; }
-				   		else if (detected_type == BOX_SMALL)  { state = CS_PUSHER1; est_delay_timer = EST_DELAY_MS; }
-				   }
-				}
-				
-			   if(HCSR04_HasError(&sensor))		// Ocurrio un error con el sensor.
-			    {
-					sensor.GRHCSR04 &= ~(1 << ERR0);  // Consume la bandera: envia el error solo una vez por ciclo.
-					stx.cmd = 0xA0;
-					stx.payloadLen = 0;
-					buildCMD(&stx);
-				}
-				
-				
-			break;
-			
-			case CS_PUSHER1:					// CS_PUSHER1: Una caja pequena debe ser eyectada por SERVO1.
-			
-				if(!servo_active && conv_mode == MODE_NORMAL && IR_IsDetected(IR_ID_1))
-				{
-					SERVO_Set(SERVO_ID_1, SERVO_PUSH);
-					servo_hold_timer = SERVO_HOLD_MS;
-					servo_active = TRUE;
-				}
+			HCSR04_Measure(&sensor);
 
-				if(!servo_active && conv_mode == MODE_ESTIMATED && !est_delay_timer)
-				{
-					SERVO_Set(SERVO_ID_1, SERVO_PUSH);
-					servo_hold_timer = SERVO_HOLD_MS;
-					servo_active = TRUE;
-				}
-			
-				if(servo_active && !servo_hold_timer)	// El tiempo de empuje termino.
-				{
-					SERVO_Set(SERVO_ID_1, SERVO_HOME);
-					servo_active = FALSE;
-					box_count[BOX_SMALL]++;
-					stx.cmd        = CMD_BOX_EJECTED;
-					stx.payload[0] = BOX_SMALL;
-					stx.payloadLen = 1;
-					buildCMD(&stx);
-					state = CS_MEASURE;
-				}
-			
-			break;
-			
-			case CS_PUSHER2:					// CS_PUSHER2: Una caja mediana debe ser eyectada por SERVO2.
-			
-				if(!servo_active && conv_mode == MODE_NORMAL && IR_IsDetected(IR_ID_2))
-				{
-					SERVO_Set(SERVO_ID_2, SERVO_PUSH);
-					servo_hold_timer = SERVO_HOLD_MS;
-					servo_active = TRUE;
-				}
+			if(HCSR04_IsReady(&sensor))
+			{
+				d_cm = HCSR04_GetDistanceCm(&sensor);
 
-				if(!servo_active && conv_mode == MODE_ESTIMATED && !est_delay_timer)
+				stx.cmd        = CMD_DIST_MEAS;
+				stx.payload[0] = d_cm;
+				stx.payloadLen = 1;
+				buildCMD(&stx);
+
+				if(HCSR04_IsObjectDetected(&sensor))
 				{
-					SERVO_Set(SERVO_ID_2, SERVO_PUSH);
-					servo_hold_timer = SERVO_HOLD_MS;
-					servo_active = TRUE;
+					_eBoxType t = CLASSIFIER_Classify(d_cm);
+					if(t != BOX_NONE) queue_push(t);
 				}
-			
-				if(servo_active && !servo_hold_timer)	// El tiempo de empuje termino.
-				{
-					SERVO_Set(SERVO_ID_2, SERVO_HOME);
-					servo_active = FALSE;
-					box_count[BOX_MEDIUM]++;
-					stx.cmd        = CMD_BOX_EJECTED;
-					stx.payload[0] = BOX_MEDIUM;
-					stx.payloadLen = 1;
-					buildCMD(&stx);
-					state = CS_MEASURE;
-				}
-			
-			break;
-			
-			case CS_PUSHER3:					// CS_PUSHER3: Una caja grande debe ser eyectada por SERVO3.
-			
-				if(!servo_active && !est_delay_timer)
-				{
-					SERVO_Set(SERVO_ID_3, SERVO_PUSH);
-					servo_hold_timer = SERVO_HOLD_MS;
-					servo_active = TRUE;
-				}
-			
-				if(servo_active && !servo_hold_timer)	// El tiempo de empuje termino.
-				{
-					SERVO_Set(SERVO_ID_3, SERVO_HOME);
-					servo_active = FALSE;
-					box_count[BOX_BIG]++;
-					stx.cmd        = CMD_BOX_EJECTED;
-					stx.payload[0] = BOX_BIG;
-					stx.payloadLen = 1;
-					buildCMD(&stx);
-					state = CS_MEASURE;
-				}
-			
-			break;
+			}
+
+			if(HCSR04_HasError(&sensor))
+			{
+				sensor.GRHCSR04 &= ~(1 << ERR0);
+				stx.cmd        = CMD_ERR_SENSOR;
+				stx.payloadLen = 0;
+				buildCMD(&stx);
+			}
+		}
+
+		// ── Pateador 1 — SMALL ───────────────────────────────────────────
+		if(!servo_active[0] && queue_front_type() == BOX_SMALL)
+		{
+			uint8_t fire = (conv_mode == MODE_NORMAL   && IR_IsDetected(IR_ID_1))
+			            || (conv_mode == MODE_ESTIMATED && queue_front_timer() == 0);
+			if(fire)
+			{
+				queue_pop();
+				SERVO_Set(SERVO_ID_1, SERVO_PUSH);
+				servo_hold_timer[0] = SERVO_HOLD_MS;
+				servo_active[0]     = TRUE;
+			}
+		}
+		if(servo_active[0] && !servo_hold_timer[0])
+		{
+			SERVO_Set(SERVO_ID_1, SERVO_HOME);
+			servo_active[0] = FALSE;
+			box_count[BOX_SMALL]++;
+			stx.cmd        = CMD_BOX_EJECTED;
+			stx.payload[0] = BOX_SMALL;
+			stx.payloadLen = 1;
+			buildCMD(&stx);
+		}
+
+		// ── Pateador 2 — MEDIUM ──────────────────────────────────────────
+		if(!servo_active[1] && queue_front_type() == BOX_MEDIUM)
+		{
+			uint8_t fire = (conv_mode == MODE_NORMAL   && IR_IsDetected(IR_ID_2))
+			            || (conv_mode == MODE_ESTIMATED && queue_front_timer() == 0);
+			if(fire)
+			{
+				queue_pop();
+				SERVO_Set(SERVO_ID_2, SERVO_PUSH);
+				servo_hold_timer[1] = SERVO_HOLD_MS;
+				servo_active[1]     = TRUE;
+			}
+		}
+		if(servo_active[1] && !servo_hold_timer[1])
+		{
+			SERVO_Set(SERVO_ID_2, SERVO_HOME);
+			servo_active[1] = FALSE;
+			box_count[BOX_MEDIUM]++;
+			stx.cmd        = CMD_BOX_EJECTED;
+			stx.payload[0] = BOX_MEDIUM;
+			stx.payloadLen = 1;
+			buildCMD(&stx);
+		}
+
+		// ── Pateador 3 — BIG (siempre por timer; IR3 no montado) ────────
+		if(!servo_active[2] && queue_front_type() == BOX_BIG && queue_front_timer() == 0)
+		{
+			queue_pop();
+			SERVO_Set(SERVO_ID_3, SERVO_PUSH);
+			servo_hold_timer[2] = SERVO_HOLD_MS;
+			servo_active[2]     = TRUE;
+		}
+		if(servo_active[2] && !servo_hold_timer[2])
+		{
+			SERVO_Set(SERVO_ID_3, SERVO_HOME);
+			servo_active[2] = FALSE;
+			box_count[BOX_BIG]++;
+			stx.cmd        = CMD_BOX_EJECTED;
+			stx.payload[0] = BOX_BIG;
+			stx.payloadLen = 1;
+			buildCMD(&stx);
 		}
 		
 		if(GPIOR0 & (1 << GPIOR00))				// Compruebo si pasaron 1ms.

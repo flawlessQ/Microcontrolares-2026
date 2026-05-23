@@ -61,26 +61,10 @@ QComboBox QAbstractItemView {
 QSpinBox {
     border: 1px solid #CBD5E0;
     border-radius: 4px;
-    padding: 2px 6px;
+    padding: 2px 4px;
     background: white;
     color: #2D3748;
-}
-QSpinBox::up-button {
-    subcontrol-origin: border;
-    subcontrol-position: top right;
-    width: 18px;
-    border-left: 1px solid #CBD5E0;
-    background: #EDF2F7;
-}
-QSpinBox::down-button {
-    subcontrol-origin: border;
-    subcontrol-position: bottom right;
-    width: 18px;
-    border-left: 1px solid #CBD5E0;
-    background: #EDF2F7;
-}
-QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-    background: #CBD5E0;
+    min-height: 24px;
 }
 QPlainTextEdit {
     background-color: #1A202C;
@@ -93,6 +77,17 @@ QPlainTextEdit {
 }
 QLabel       { color: #2D3748; background: transparent; }
 QRadioButton { font-weight: normal; color: #2D3748; spacing: 6px; }
+QRadioButton:checked { color: #1E5FA3; font-weight: bold; }
+QRadioButton::indicator {
+    width: 14px; height: 14px;
+    border: 2px solid #CBD5E0;
+    border-radius: 7px;
+    background: white;
+}
+QRadioButton::indicator:checked {
+    background-color: #1E5FA3;
+    border: 2px solid #1E5FA3;
+}
 QLCDNumber   { background-color: #1A202C; border-radius: 4px; }
 )";
 
@@ -105,7 +100,7 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
     setStyleSheet(APP_STYLE);
-    setMinimumSize(860, 640);
+    setMinimumSize(860, 680);
 
     serial    = new QSerialPort(this);
     protocolo = new protocoloUNERQt(this);
@@ -260,7 +255,7 @@ void MainWindow::buildUI()
     // --- Configuracion ---
     groupConfig = new QGroupBox("Configuración");
     QVBoxLayout *cfgLayout = new QVBoxLayout(groupConfig);
-    cfgLayout->setSpacing(7);
+    cfgLayout->setSpacing(4);
 
     QLabel *lblModo = new QLabel("Modo de operación:");
     lblModo->setStyleSheet("font-weight: bold; background: transparent;");
@@ -288,10 +283,10 @@ void MainWindow::buildUI()
         spin->setRange(1, 30);
         spin->setSuffix(" cm");
         spin->setValue(val);
-        spin->setFixedSize(90, 28);
+        spin->setFixedSize(100, 26);
         QHBoxLayout *row = new QHBoxLayout();
         row->setSpacing(8);
-        row->setContentsMargins(0, 2, 0, 2);
+        row->setContentsMargins(0, 0, 0, 0);
         QLabel *l = new QLabel(lbl);
         l->setFixedWidth(62);
         row->addWidget(l);
@@ -311,8 +306,7 @@ void MainWindow::buildUI()
     spinRefDist->setRange(5, 50);
     spinRefDist->setSuffix(" cm");
     spinRefDist->setValue(20);
-    spinRefDist->setMinimumWidth(90);
-    spinRefDist->setFixedHeight(30);
+    spinRefDist->setFixedSize(100, 26);
     refRow->addWidget(spinRefDist);
     refRow->addStretch();
     cfgLayout->addLayout(refRow);
@@ -320,8 +314,9 @@ void MainWindow::buildUI()
     labelLockWarning = new QLabel("⚠  Cinta en movimiento — configuración bloqueada");
     labelLockWarning->setStyleSheet(
         "color: #C05621; background-color: #FEFCE8; border: 1px solid #F6AD55;"
-        "border-radius: 4px; padding: 5px 7px; font-size: 11px;");
+        "border-radius: 4px; padding: 5px 7px 8px 7px; font-size: 11px;");
     labelLockWarning->setWordWrap(true);
+    labelLockWarning->setMinimumHeight(38);
     labelLockWarning->setVisible(false);
     cfgLayout->addWidget(labelLockWarning);
 

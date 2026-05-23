@@ -6,10 +6,10 @@
 
 static const uint8_t ir_pin[IR_COUNT] =
 {
-	PIND2,
-	PIND3,
-	PIND4,
-	PIND5
+	PIND4,		// IR0: zona de medicion (D4, remapeado hasta tener D2 disponible)
+	PIND3,		// IR1: pateador 1 (D3)
+	PIND4,		// IR2: pateador 2 (sin sensor propio, comparte D4 con IR0)
+	PIND5		// IR3: pateador 3 (D5)
 };
 
 static uint8_t ir_stable_state[IR_COUNT] = {0};
@@ -87,7 +87,7 @@ void IR_UpdateDebounce(void)
 			ir_debounce_count[i] = 0;
 		}
 
-		// Si la caja está detectada estable, cuento el tiempo bloqueado.
+		// Si la caja estï¿½ detectada estable, cuento el tiempo bloqueado.
 		if(ir_stable_state[i])
 		{
 			if(ir_time_ms[i] < 60000u)
