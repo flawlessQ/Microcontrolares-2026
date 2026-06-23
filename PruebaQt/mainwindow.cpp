@@ -52,7 +52,8 @@ QComboBox {
     color: #2D3748;
     min-height: 26px;
 }
-QComboBox::drop-down { border: none; width: 20px; }
+QComboBox::drop-down { border-left: 1px solid #CBD5E0; width: 20px; background: #EDF2F7; }
+QComboBox::down-arrow { image: url(:/icons/down_arrow.svg); width: 10px; height: 10px; }
 QComboBox QAbstractItemView {
     background: white;
     color: #2D3748;
@@ -60,11 +61,37 @@ QComboBox QAbstractItemView {
 }
 QSpinBox {
     border: 1px solid #CBD5E0;
-    border-radius: 4px;
-    padding: 2px 4px;
+    padding: 2px 20px 2px 4px;
     background: white;
     color: #2D3748;
-    min-height: 24px;
+    min-height: 22px;
+}
+QSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 18px;
+    border-left: 1px solid #CBD5E0;
+    background: #EDF2F7;
+}
+QSpinBox::up-button:pressed { background: #CBD5E0; }
+QSpinBox::up-arrow {
+    image: url(:/icons/up_arrow.svg);
+    width: 8px;
+    height: 8px;
+}
+QSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 18px;
+    border-left: 1px solid #CBD5E0;
+    border-top: 1px solid #CBD5E0;
+    background: #EDF2F7;
+}
+QSpinBox::down-button:pressed { background: #CBD5E0; }
+QSpinBox::down-arrow {
+    image: url(:/icons/down_arrow.svg);
+    width: 8px;
+    height: 8px;
 }
 QPlainTextEdit {
     background-color: #1A202C;
@@ -196,12 +223,27 @@ void MainWindow::buildUI()
     connect(btnRefresh,  &QPushButton::clicked, this, &MainWindow::onRefreshPorts);
     mainLayout->addWidget(grpConn);
 
-    // ── Fila central ─────────────────────────────────────────────────────────
-    QHBoxLayout *midLayout = new QHBoxLayout();
+    // ── Pestañas ─────────────────────────────────────────────────────────────
+    QTabWidget *tabs = new QTabWidget();
+    tabs->setStyleSheet(R"(
+        QTabWidget::pane  { border: 1px solid #CBD5E0; border-radius: 6px; background: white; }
+        QTabBar::tab      { background: #EDF2F7; color: #4A5568; padding: 7px 20px;
+                            border: 1px solid #CBD5E0; border-bottom: none;
+                            border-top-left-radius: 5px; border-top-right-radius: 5px; }
+        QTabBar::tab:selected { background: white; color: #1E5FA3; font-weight: bold; }
+        QTabBar::tab:hover    { background: #E2E8F0; }
+    )");
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PESTAÑA 1 — ESTADO
+    // ════════════════════════════════════════════════════════════════════════
+    QWidget *tabEstado = new QWidget();
+    QHBoxLayout *midLayout = new QHBoxLayout(tabEstado);
     midLayout->setSpacing(10);
+    midLayout->setContentsMargins(10, 10, 10, 10);
 
     // --- Estado del transportador ---
-    QGroupBox *grpEstado = new QGroupBox("Estado del Transportador");
+    QGroupBox *grpEstado = new QGroupBox("Transportador");
     QVBoxLayout *estadoLayout = new QVBoxLayout(grpEstado);
     estadoLayout->setSpacing(8);
 
@@ -213,50 +255,73 @@ void MainWindow::buildUI()
     labelEstadoCinta->setMinimumHeight(64);
     estadoLayout->addWidget(labelEstadoCinta);
 
-    labelDistancia = new QLabel("Altura: -- cm");
+    labelDistancia = new QLabel("Altura medida: -- cm");
     labelDistancia->setAlignment(Qt::AlignCenter);
     labelDistancia->setStyleSheet("font-size: 13px; color: #4A5568; background: transparent;");
     estadoLayout->addWidget(labelDistancia);
+
+    labelVelocidad = new QLabel("Velocidad de cinta: -- mm/s");
+    labelVelocidad->setAlignment(Qt::AlignCenter);
+    labelVelocidad->setStyleSheet("font-size: 13px; color: #4A5568; background: transparent;");
+    estadoLayout->addWidget(labelVelocidad);
+
+    btnConveyor = new QPushButton("INICIAR CINTA");
+    btnConveyor->setEnabled(false);
+    btnConveyor->setStyleSheet("background-color: #276749;");
+    estadoLayout->addWidget(btnConveyor);
+    connect(btnConveyor, &QPushButton::clicked, this, &MainWindow::onConveyorToggle);
     estadoLayout->addStretch();
 
-    grpEstado->setMinimumWidth(190);
-    midLayout->addWidget(grpEstado, 2);
+    midLayout->addWidget(grpEstado, 1);
 
     // --- Contadores ---
     QGroupBox *grpCnt = new QGroupBox("Contadores de Cajas");
-    QGridLayout *cntLayout = new QGridLayout(grpCnt);
+    QVBoxLayout *cntLayout = new QVBoxLayout(grpCnt);
     cntLayout->setSpacing(6);
-    cntLayout->setColumnStretch(1, 1);
 
     auto makeCounter = [&](const QString &nombre, const QString &color,
-                           QLCDNumber *&lcd, int row) {
+                           QLCDNumber *&lcd) {
+        QHBoxLayout *row = new QHBoxLayout();
+        row->setSpacing(10);
         QLabel *lbl = new QLabel(nombre);
+        lbl->setFixedWidth(80);
         lbl->setStyleSheet(QString("color: %1; font-weight: bold; background: transparent;").arg(color));
         lcd = new QLCDNumber(4);
         lcd->setSegmentStyle(QLCDNumber::Filled);
-        lcd->setMinimumHeight(46);
+        lcd->setFixedHeight(36);
         lcd->display(0);
-        cntLayout->addWidget(lbl, row, 0);
-        cntLayout->addWidget(lcd, row, 1);
+        row->addWidget(lbl);
+        row->addWidget(lcd);
+        cntLayout->addLayout(row);
     };
-    makeCounter("Pequeña",     "#2B6CB0", lcdPequena,     0);
-    makeCounter("Mediana",     "#276749", lcdMediana,     1);
-    makeCounter("Grande",      "#C05621", lcdGrande,      2);
-    makeCounter("Descartadas", "#742A2A", lcdDescartadas, 3);
+    makeCounter("Pequeña",     "#2B6CB0", lcdPequena);
+    makeCounter("Mediana",     "#276749", lcdMediana);
+    makeCounter("Grande",      "#C05621", lcdGrande);
+    makeCounter("Descartadas", "#742A2A", lcdDescartadas);
 
+    cntLayout->addStretch();
     QPushButton *btnReset = new QPushButton("RESET CONTADORES");
     btnReset->setStyleSheet("background-color: #718096;");
-    btnReset->setToolTip("Reinicia los contadores en el firmware");
-    cntLayout->addWidget(btnReset, 4, 0, 1, 2);
+    cntLayout->addWidget(btnReset);
     connect(btnReset, &QPushButton::clicked, this, &MainWindow::onResetContadores);
 
-    grpCnt->setMinimumWidth(220);
-    midLayout->addWidget(grpCnt, 2);
+    midLayout->addWidget(grpCnt, 1);
 
-    // --- Configuracion ---
-    groupConfig = new QGroupBox("Configuración");
+    tabs->addTab(tabEstado, "Estado");
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PESTAÑA 2 — CONFIGURACIÓN
+    // ════════════════════════════════════════════════════════════════════════
+    QWidget *tabConfig = new QWidget();
+    QHBoxLayout *cfgMainLayout = new QHBoxLayout(tabConfig);
+    cfgMainLayout->setSpacing(10);
+    cfgMainLayout->setContentsMargins(10, 10, 10, 10);
+
+    // --- Columna izquierda: modo + umbrales ---
+    groupConfig = new QGroupBox("Clasificación");
+    groupConfig->setMinimumHeight(220);
     QVBoxLayout *cfgLayout = new QVBoxLayout(groupConfig);
-    cfgLayout->setSpacing(4);
+    cfgLayout->setSpacing(10);
 
     QLabel *lblModo = new QLabel("Modo de operación:");
     lblModo->setStyleSheet("font-weight: bold; background: transparent;");
@@ -275,44 +340,42 @@ void MainWindow::buildUI()
     cfgLine->setStyleSheet("color: #E2E8F0;");
     cfgLayout->addWidget(cfgLine);
 
-    QLabel *lblUmbrales = new QLabel("Alturas mínimas de detección (cm):");
+    QLabel *lblUmbrales = new QLabel("Alturas minimas de deteccion:");
     lblUmbrales->setStyleSheet("font-weight: bold; background: transparent;");
     cfgLayout->addWidget(lblUmbrales);
 
-    auto addThreshRow = [&](const QString &lbl, QSpinBox *&spin, int val) {
-        spin = new QSpinBox();
-        spin->setRange(1, 30);
-        spin->setSuffix(" cm");
-        spin->setValue(val);
-        spin->setFixedSize(100, 26);
-        QHBoxLayout *row = new QHBoxLayout();
-        row->setSpacing(8);
-        row->setContentsMargins(0, 0, 0, 0);
-        QLabel *l = new QLabel(lbl);
-        l->setFixedWidth(62);
-        row->addWidget(l);
-        row->addWidget(spin);
-        row->addStretch();
-        cfgLayout->addLayout(row);
+    auto makeSpin = [](int val, int mn, int mx) {
+        QSpinBox *s = new QSpinBox();
+        s->setRange(mn, mx);
+        s->setSuffix(" cm");
+        s->setValue(val);
+        s->setFixedWidth(90);
+        return s;
     };
-    addThreshRow("Pequeña:",  spinSmall,  6);
-    addThreshRow("Mediana:",  spinMedium, 8);
-    addThreshRow("Grande:",   spinBig,    10);
+    spinSmall   = makeSpin(6,  1, 30);
+    spinMedium  = makeSpin(8,  1, 30);
+    spinBig     = makeSpin(10, 1, 30);
+    spinRefDist = makeSpin(20, 5, 50);
 
-    QHBoxLayout *refRow = new QHBoxLayout();
-    QLabel *lblRef = new QLabel("Dist. referencia:");
-    lblRef->setStyleSheet("font-weight: bold; background: transparent;");
-    refRow->addWidget(lblRef);
-    spinRefDist = new QSpinBox();
-    spinRefDist->setRange(5, 50);
-    spinRefDist->setSuffix(" cm");
-    spinRefDist->setValue(20);
-    spinRefDist->setFixedSize(100, 26);
-    refRow->addWidget(spinRefDist);
-    refRow->addStretch();
-    cfgLayout->addLayout(refRow);
+    // Grid 2x2: [label][spin] | [label][spin]
+    QGridLayout *threshGrid = new QGridLayout();
+    threshGrid->setHorizontalSpacing(8);
+    threshGrid->setVerticalSpacing(10);
+    threshGrid->setColumnStretch(4, 1);  // columna final absorbe espacio sobrante
 
-    labelLockWarning = new QLabel("⚠  Cinta en movimiento — configuración bloqueada");
+    struct { const char *lbl; QSpinBox **spin; int row; int col; } cells[] = {
+        { "Pequena:",    &spinSmall,   0, 0 },
+        { "Mediana:",    &spinMedium,  0, 2 },
+        { "Grande:",     &spinBig,     1, 0 },
+        { "Dist. ref.:", &spinRefDist, 1, 2 },
+    };
+    for (auto &c : cells) {
+        threshGrid->addWidget(new QLabel(c.lbl),  c.row, c.col,     Qt::AlignLeft | Qt::AlignVCenter);
+        threshGrid->addWidget(*c.spin,            c.row, c.col + 1, Qt::AlignLeft | Qt::AlignVCenter);
+    }
+    cfgLayout->addLayout(threshGrid);
+
+    labelLockWarning = new QLabel("⚠  Cinta en movimiento — configuracion bloqueada");
     labelLockWarning->setStyleSheet(
         "color: #C05621; background-color: #FEFCE8; border: 1px solid #F6AD55;"
         "border-radius: 4px; padding: 5px 7px 8px 7px; font-size: 11px;");
@@ -321,15 +384,72 @@ void MainWindow::buildUI()
     labelLockWarning->setVisible(false);
     cfgLayout->addWidget(labelLockWarning);
 
-    btnAplicar = new QPushButton("APLICAR CONFIGURACIÓN");
+    btnAplicar = new QPushButton("APLICAR CLASIFICACIÓN");
     btnAplicar->setEnabled(false);
     cfgLayout->addWidget(btnAplicar);
     connect(btnAplicar, &QPushButton::clicked, this, &MainWindow::onAplicarConfig);
 
-    groupConfig->setMinimumWidth(240);
-    midLayout->addWidget(groupConfig, 3);
+    cfgMainLayout->addWidget(groupConfig, 1);
 
-    mainLayout->addLayout(midLayout);
+    // --- Columna derecha: servos ---
+    QGroupBox *grpServos = new QGroupBox("Posiciones de Servos");
+    grpServos->setMinimumHeight(240);
+    QVBoxLayout *srvLayout = new QVBoxLayout(grpServos);
+    srvLayout->setSpacing(10);
+
+    QLabel *lblSrvInfo = new QLabel("Configurar angulo HOME y PUSH para cada servo:");
+    lblSrvInfo->setStyleSheet("font-weight: bold; background: transparent;");
+    srvLayout->addWidget(lblSrvInfo);
+
+    // Cabeceras de columna
+    QGridLayout *srvGrid = new QGridLayout();
+    srvGrid->setSpacing(10);
+    srvGrid->setColumnStretch(0, 0);
+    srvGrid->setColumnStretch(1, 1);
+    srvGrid->setColumnStretch(2, 0);
+    srvGrid->setColumnStretch(3, 1);
+
+    QLabel *hdrHome = new QLabel("HOME");
+    QLabel *hdrPush = new QLabel("PUSH");
+    hdrHome->setStyleSheet("color: #1E5FA3; font-weight: bold; background: transparent;");
+    hdrPush->setStyleSheet("color: #C05621; font-weight: bold; background: transparent;");
+    srvGrid->addWidget(new QLabel(""),  0, 0);
+    srvGrid->addWidget(hdrHome,         0, 1);
+    srvGrid->addWidget(hdrPush,         0, 2);
+
+    const char *servoNames[] = { "Servo 1", "Servo 2", "Servo 3" };
+    for (int i = 0; i < 3; i++) {
+        QLabel *lname = new QLabel(servoNames[i]);
+        lname->setStyleSheet("font-weight: bold; background: transparent;");
+
+        comboServoHome[i] = new QComboBox();
+        comboServoHome[i]->addItem("0°");
+        comboServoHome[i]->addItem("180°");
+        comboServoHome[i]->setCurrentIndex(0);
+        comboServoHome[i]->setFixedWidth(90);
+
+        comboServoPush[i] = new QComboBox();
+        comboServoPush[i]->addItem("0°");
+        comboServoPush[i]->addItem("180°");
+        comboServoPush[i]->setCurrentIndex(1);
+        comboServoPush[i]->setFixedWidth(90);
+
+        srvGrid->addWidget(lname,              i + 1, 0);
+        srvGrid->addWidget(comboServoHome[i],  i + 1, 1);
+        srvGrid->addWidget(comboServoPush[i],  i + 1, 2);
+    }
+    srvLayout->addLayout(srvGrid);
+
+    btnAplicarServos = new QPushButton("APLICAR SERVOS");
+    btnAplicarServos->setEnabled(false);
+    srvLayout->addWidget(btnAplicarServos);
+    connect(btnAplicarServos, &QPushButton::clicked, this, &MainWindow::onAplicarServos);
+
+    cfgMainLayout->addWidget(grpServos, 1);
+
+    tabs->addTab(tabConfig, "Configuración");
+
+    mainLayout->addWidget(tabs, 1);
 
     // ── Log ──────────────────────────────────────────────────────────────────
     QGroupBox *grpLog = new QGroupBox("Log de comunicación");
@@ -337,9 +457,12 @@ void MainWindow::buildUI()
     logEdit = new QPlainTextEdit();
     logEdit->setReadOnly(true);
     logEdit->setMaximumBlockCount(300);
-    logEdit->setMinimumHeight(130);
+    logEdit->setMinimumHeight(80);
     logLayout->addWidget(logEdit);
     mainLayout->addWidget(grpLog);
+
+    this->setMinimumSize(860, 640);
+    this->resize(960, 700);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -382,6 +505,7 @@ void MainWindow::setConfigLocked(bool locked)
     radioNormal->setEnabled(!locked);
     radioEstimado->setEnabled(!locked);
     btnAplicar->setEnabled(!locked && conectado);
+    btnAplicarServos->setEnabled(!locked && conectado);
     labelLockWarning->setVisible(locked);
 }
 
@@ -441,6 +565,8 @@ void MainWindow::onConnectClicked()
             labelConexion->setText("● Conectado");
             labelConexion->setStyleSheet("color: #276749; font-weight: bold; background: transparent;");
             btnAplicar->setEnabled(true);
+            btnAplicarServos->setEnabled(true);
+            btnConveyor->setEnabled(true);
             pollTimer->start();
             log("Puerto " + puerto + " abierto — 115200 8N1.");
         } else {
@@ -455,6 +581,12 @@ void MainWindow::onConnectClicked()
         labelConexion->setText("● Desconectado");
         labelConexion->setStyleSheet("color: #E53E3E; font-weight: bold; background: transparent;");
         btnAplicar->setEnabled(false);
+        btnAplicarServos->setEnabled(false);
+        btnConveyor->setEnabled(false);
+        conveyorRunning = false;
+        btnConveyor->setText("INICIAR CINTA");
+        btnConveyor->setStyleSheet("background-color: #276749;");
+        labelVelocidad->setText("Velocidad: -- mm/s");
         labelEstadoCinta->setText("DESCONECTADO");
         labelEstadoCinta->setStyleSheet(
             "background-color: #718096; color: white; font-size: 15px; font-weight: bold;"
@@ -524,6 +656,13 @@ void MainWindow::onPaqueteRecibido(quint8 cmd, QByteArray payload)
         log("[A7] ✗ Caja descartada — fuera de rango o cajas pegadas");
         break;
 
+    case CMD_BELT_SPEED:
+        if (payload.size() >= 2) {
+            quint16 spd = (static_cast<quint8>(payload[0]) << 8) | static_cast<quint8>(payload[1]);
+            labelVelocidad->setText(QString("Velocidad: %1 mm/s").arg(spd));
+        }
+        break;
+
     case CMD_ACK:
         if (payload.size() >= 2) {
             quint8 echocmd = static_cast<quint8>(payload[0]);
@@ -586,4 +725,43 @@ void MainWindow::onResetContadores()
     lcdGrande->display(0);
     lcdDescartadas->display(0);
     log("[RST]  Contadores reseteados.");
+}
+
+void MainWindow::onAplicarServos()
+{
+    // index 0 = "0°"  -> 1ms, index 1 = "180°" -> 2ms
+    auto idxToMs = [](int idx) -> quint8 { return idx == 0 ? 1 : 2; };
+
+    for (int i = 0; i < 3; i++) {
+        quint8 home_ms = idxToMs(comboServoHome[i]->currentIndex());
+        quint8 push_ms = idxToMs(comboServoPush[i]->currentIndex());
+        QByteArray p;
+        p.append(static_cast<char>(i));
+        p.append(static_cast<char>(home_ms));
+        p.append(static_cast<char>(push_ms));
+        enviarComando(CMD_SET_SERVO, p);
+        log(QString("[SRV]  Servo %1 — Home: %2  Push: %3")
+                .arg(i + 1)
+                .arg(comboServoHome[i]->currentText())
+                .arg(comboServoPush[i]->currentText()));
+    }
+}
+
+void MainWindow::onConveyorToggle()
+{
+    conveyorRunning = !conveyorRunning;
+    QByteArray p;
+    p.append(static_cast<char>(conveyorRunning ? 1 : 0));
+    enviarComando(CMD_SET_CONVEYOR, p);
+
+    if (conveyorRunning) {
+        btnConveyor->setText("DETENER CINTA");
+        btnConveyor->setStyleSheet("background-color: #E53E3E;");
+        log("[CNV]  Cinta iniciada.");
+    } else {
+        btnConveyor->setText("INICIAR CINTA");
+        btnConveyor->setStyleSheet("background-color: #276749;");
+        labelVelocidad->setText("Velocidad: -- mm/s");
+        log("[CNV]  Cinta detenida.");
+    }
 }

@@ -1,5 +1,7 @@
 <!DOCTYPE RCC><RCC version="1.0">
 <qresource prefix="/">
     <file alias="resources/logofcal.png">../logofcal.png</file>
+    <file alias="icons/up_arrow.svg">up_arrow.svg</file>
+    <file alias="icons/down_arrow.svg">down_arrow.svg</file>
 </qresource>
 </RCC>

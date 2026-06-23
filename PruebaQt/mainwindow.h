@@ -12,6 +12,7 @@
 #include <QSpinBox>
 #include <QPlainTextEdit>
 #include <QGroupBox>
+#include <QFormLayout>
 #include <QLCDNumber>
 #include "protocoloUNERQt.h"
 
@@ -33,6 +34,11 @@
 #define CMD_SET_THRESH   0xB4
 #define CMD_SET_CALIB    0xB5
 #define CMD_RESET_COUNTS 0xB6
+#define CMD_SET_SERVO    0xB8   // payload: servo_id, home_ms, push_ms
+#define CMD_SET_CONVEYOR 0xB9   // payload: 0=stop 1=start
+
+// === Comandos firmware -> GUI extras ===
+#define CMD_BELT_SPEED   0xA8   // payload: speed_H, speed_L (mm/s)
 
 // === ACK status ===
 #define ACK_OK           0x00
@@ -64,7 +70,9 @@ private slots:
     void onPaqueteRecibido(quint8 cmd, QByteArray payload);
     void onBadChecksum();
     void onAplicarConfig();
+    void onAplicarServos();
     void onResetContadores();
+    void onConveyorToggle();
     void onPollTimer();
 
 private:
@@ -83,8 +91,11 @@ private:
     QLabel      *labelConexion;
 
     // Estado
-    QLabel *labelEstadoCinta;
-    QLabel *labelDistancia;
+    QLabel      *labelEstadoCinta;
+    QLabel      *labelDistancia;
+    QLabel      *labelVelocidad;
+    QPushButton *btnConveyor;
+    bool         conveyorRunning = false;
 
     // Contadores
     QLCDNumber *lcdPequena;
@@ -102,6 +113,11 @@ private:
     QSpinBox     *spinRefDist;
     QLabel       *labelLockWarning;
     QPushButton  *btnAplicar;
+
+    // Servos
+    QComboBox *comboServoHome[3];
+    QComboBox *comboServoPush[3];
+    QPushButton *btnAplicarServos;
 
     // Log
     QPlainTextEdit *logEdit;
