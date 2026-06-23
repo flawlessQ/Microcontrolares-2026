@@ -78,49 +78,40 @@ static uint32_t ms_counter      = 0;
 static uint32_t speed_t0        = 0;
 
 // ===========================================================================
-// FUNCIONES AUXILIARES DEL HC-SR04
+// MEF SONAR HC-SR04 (no bloqueante)
+//
+// La MEF corre en el while(1) via SonarUpdate(). No usa while-loops de espera.
+// Timer2 (1us/tick, OCF2A) mide el pulso TRIG.
+// Timer1 se "presta" sin ISR solo mientras ECHO esta en HIGH; se restaura
+// apenas ECHO baja. Los callbacks MyTrigger/MyReadEcho que usa el driver
+// son no-bloqueantes: MyTrigger es no-op y MyReadEcho lee el resultado
+// pre-calculado por la MEF.
 // ===========================================================================
 
-static void delay_us(uint8_t us){
-    while(us--){
-        TIFR2 |= (1 << OCF2A);
-        while(!(TIFR2 & (1 << OCF2A)));
-    }
-}
+typedef enum {
+    SONAR_IDLE = 0,
+    SONAR_TRIG,        // Contando 10us del pulso TRIG via Timer2
+    SONAR_WAIT_UP,     // Esperando flanco de subida del ECHO
+    SONAR_MEASURING,   // ECHO en HIGH, Timer1 corriendo en modo Normal
+    SONAR_DONE,
+    SONAR_ERR
+} _eSonarState;
 
-static void MyTrigger(void *context){
-    (void)context;
-    DDRB  |=  (1 << TRIG_PIN);
-    PORTB |=  (1 << TRIG_PIN);
-    delay_us(10);
-    PORTB &= ~(1 << TRIG_PIN);
-}
+static _eSonarState sonar_state   = SONAR_IDLE;
+static uint8_t      sonar_trig_us = 0;
+static uint16_t     sonar_wait_ms = 0;   // timeout WAIT_UP, decrementado en bloque 1ms
+static uint32_t     sonar_echo_us = 0;   // resultado pre-calculado
+static uint8_t      sonar_ready   = 0;
+static uint8_t      sonar_err     = 0;
 
-static uint8_t MyReadEcho(void *context, uint32_t *echo_us){
-    uint16_t timeout;
-    (void)context;
-
-    DDRB &= ~(1 << ECHO_PIN);
-
+static void Timer1_BorrowStart(void){
     TIMSK1 &= ~(1 << OCIE1A);
     TCCR1A  = 0;
-    TCCR1B  = (1 << CS11);
+    TCCR1B  = (1 << CS11);    // Normal, prescaler 8 -> 0.5us/tick
     TCNT1   = 0;
+}
 
-    timeout = 10000;
-    while(!(PINB & (1 << ECHO_PIN))){
-        if(--timeout == 0) goto restore;
-    }
-
-    TCNT1 = 0;
-
-    timeout = 60000;
-    while(PINB & (1 << ECHO_PIN)){
-        if(--timeout == 0) goto restore;
-    }
-
-    *echo_us = (uint32_t)TCNT1 / 2;
-
+static void Timer1_Restore(void){
     TCCR1A = 0;
     TCCR1B = (1 << WGM12) | (1 << CS11) | (1 << CS10);
     OCR1AH = 0;
@@ -128,17 +119,73 @@ static uint8_t MyReadEcho(void *context, uint32_t *echo_us){
     TCNT1H = 0;
     TCNT1L = 0;
     TIMSK1 |= (1 << OCIE1A);
+}
+
+static void SonarStart(void){
+    if(sonar_state != SONAR_IDLE) return;
+    sonar_ready   = 0;
+    sonar_err     = 0;
+    sonar_trig_us = 0;
+    sonar_wait_ms = 10;           // timeout 10ms para que ECHO suba
+    DDRB  |=  (1 << TRIG_PIN);
+    PORTB |=  (1 << TRIG_PIN);   // TRIG HIGH
+    TIFR2 |=  (1 << OCF2A);      // Limpiar flag Timer2
+    sonar_state = SONAR_TRIG;
+}
+
+static void SonarUpdate(void){
+    switch(sonar_state){
+
+        case SONAR_IDLE:
+        case SONAR_DONE:
+        case SONAR_ERR:
+            break;
+
+        case SONAR_TRIG:
+            if(TIFR2 & (1 << OCF2A)){
+                TIFR2 |= (1 << OCF2A);
+                if(++sonar_trig_us >= 10){
+                    PORTB &= ~(1 << TRIG_PIN);   // TRIG LOW tras 10us
+                    sonar_state = SONAR_WAIT_UP;
+                }
+            }
+            break;
+
+        case SONAR_WAIT_UP:
+            if(sonar_wait_ms == 0){ sonar_err=1; sonar_state=SONAR_ERR; break; }
+            if(PINB & (1 << ECHO_PIN)){
+                Timer1_BorrowStart();
+                sonar_state = SONAR_MEASURING;
+            }
+            break;
+
+        case SONAR_MEASURING:
+            if(!(PINB & (1 << ECHO_PIN))){
+                uint16_t ticks = TCNT1;
+                Timer1_Restore();
+                sonar_echo_us = (uint32_t)ticks / 2;   // 0.5us/tick -> us
+                sonar_ready   = 1;
+                sonar_state   = SONAR_DONE;
+            } else if(TCNT1 > 60000){    // ~30ms: sin eco
+                Timer1_Restore();
+                sonar_err   = 1;
+                sonar_state = SONAR_ERR;
+            }
+            break;
+    }
+}
+
+// MyTrigger: la MEF ya envio el pulso; este callback es no-op.
+static void MyTrigger(void *context){ (void)context; }
+
+// MyReadEcho: devuelve el resultado pre-calculado por la MEF (no bloquea).
+static uint8_t MyReadEcho(void *context, uint32_t *echo_us){
+    (void)context;
+    if(!sonar_ready) return 0;
+    *echo_us    = sonar_echo_us;
+    sonar_ready = 0;
+    sonar_state = SONAR_IDLE;
     return 1;
-
-restore:
-    TCCR1A = 0;
-    TCCR1B = (1 << WGM12) | (1 << CS11) | (1 << CS10);
-    OCR1AH = 0;
-    OCR1AL = 249;
-    TCNT1H = 0;
-    TCNT1L = 0;
-    TIMSK1 |= (1 << OCIE1A);
-    return 0;
 }
 
 // ===========================================================================
@@ -295,6 +342,9 @@ int main(void){
 
         Heartbeat();
 
+        // =================================================================
+        // BLOQUE DE 1ms
+        // =================================================================
         if(GPIOR0 & (1 << 0)){
             GPIOR0 &= ~(1 << 0);
 
@@ -323,6 +373,8 @@ int main(void){
                 }
             }
 
+            if(sonar_wait_ms > 0) sonar_wait_ms--;
+
             if(!time100ms) time100ms = 100;
             time100ms--;
 
@@ -333,8 +385,20 @@ int main(void){
             }
         }
 
+        // =================================================================
+        // MEF SONAR: avanza un paso sin bloquear
+        // =================================================================
+        SonarUpdate();
+
+        // =================================================================
+        // MEF 1: DETECCION (IR0 - sensor del clasificador)
+        // =================================================================
         if(IR_FallingEdge(IR0)){
             speed_t0 = ms_counter;
+            SonarStart();
+        }
+
+        if(sonar_ready){
             uint16_t d_cm;
             _sHCSR04_status_t st = HCSR04_MeasureCm(&sensor, &d_cm);
 
@@ -356,11 +420,18 @@ int main(void){
                         est_timer[pusher] = est_delay[pusher];
                     }
                 }
-            } else {
-                COM_SendFrame(CMD_ERR_SENSOR, 0, 0);
             }
         }
 
+        if(sonar_err){
+            sonar_err   = 0;
+            sonar_state = SONAR_IDLE;
+            COM_SendFrame(CMD_ERR_SENSOR, 0, 0);
+        }
+
+        // =================================================================
+        // MEF 2: EYECCION (IR1, IR2, IR3 - sensores de pateadores)
+        // =================================================================
         if(conv_mode == MODE_NORMAL){
             if(IR_FallingEdge(IR1)){
                 uint16_t t01 = (uint16_t)(ms_counter - speed_t0);
@@ -382,6 +453,9 @@ int main(void){
             if(IR_FallingEdge(IR3)) if(IRTARGET_Tick(PUSHER_3)) FirePusher(2);
         }
 
+        // =================================================================
+        // PARSER UART - PROTOCOLO UNER
+        // =================================================================
         COM_Update();
         if(COM_FrameAvailable()){
             uint8_t cmd, payload[COM_PAYLOAD_SIZE], len;
