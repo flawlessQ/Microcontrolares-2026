@@ -5,9 +5,10 @@
  *  Author: juani
  */
 
+// U2X0=1 (double-speed): error 2.1% vs ~8.5% sin U2X → unico modo viable a 115200/16MHz
 #define F_CPU   16000000UL
 #define BAUD    115200UL
-#define UBRR_VAL ((F_CPU / (16UL * BAUD)) - 1)
+#define UBRR_VAL ((F_CPU / (8UL * BAUD)) - 1)   // = 16 con U2X0=1
 
 #include "COMUNICATION.h"
 
@@ -19,7 +20,8 @@ void COM_Init(){
     rx_head = 0;
     rx_tail = 0;
 
-    // Baud rate
+    // Baud rate con double-speed (U2X0=1 → UBRR=16 → 117647 baud, error 2.1%)
+    UCSR0A = (1 << U2X0);
     UBRR0H = (uint8_t)(UBRR_VAL >> 8);
     UBRR0L = (uint8_t)(UBRR_VAL & 0xFF);
 
