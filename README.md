@@ -102,12 +102,11 @@ Caja llega a IR0
 
 | Timer | Modo | Período | Rol |
 |-------|------|---------|-----|
-| Timer0 CTC | Interrupción | 1 ms | Setea flag `GPIOR00` → dispara `On1ms()` en el loop |
-| Timer1 CTC | ISR | 1 ms | `SERVO_On1ms()` — genera PWM 50Hz de los tres servos |
-| Timer1 Normal | Busy-wait | prestado | Medición HC-SR04 (prescaler 8 → 1 tick = 0.5 µs) |
-| Timer2 CTC | Polling | 1 µs | Flag `OCF2A` — base de tiempo de alta resolución |
+| Timer0 CTC | Interrupción | ~1 ms | Setea flag `GPIOR00` → dispara `On1ms()` en el loop |
+| Timer1 CTC | ISR | 1 ms | `ISR(TIMER1_COMPA_vect)` — genera PWM 50 Hz de los tres servos |
+| Timer2 Normal | Libre (polling TOV2) | 4 µs/tick | Contador extendido para MEF HC-SR04 no bloqueante |
 
-> Timer1 es compartido: durante `HCSR04_Measure()` la ISR de servo se deshabilita, Timer1 se reconfigura en modo Normal para capturar el pulso ECHO, y al terminar se restaura a CTC para el PWM.
+> Timer2 corre libre en modo Normal con prescaler 64. `TIMER2_GetTicks()` extiende el contador de 8 bits con un acumulador de overflows, dando hasta ~1 s de rango sin ISR adicional.
 
 ---
 
@@ -266,6 +265,17 @@ Desarrollada en Qt 6. Toda la interfaz se construye por código en `buildUI()`.
 - Polling automático cada 500 ms (`GET_STATE` + `GET_COUNTS`)
 - Panel de configuración bloqueado mientras la cinta está en movimiento
 - Log con timestamps de todos los eventos
+
+---
+
+## Historial de versiones (Actividad4V2)
+
+| Versión | Descripción |
+|---------|-------------|
+| `v1.0` | Main limpio: GPIOs, Timer0 heartbeat, Timer1 SERVO, IR — bloqueante |
+| `v1.1` | MEF sonar no bloqueante con Timer1 prestado |
+| `v1.2` | Reescritura completa: heartbeat corregido (`OCR0A+=249`), IR0/1/2 activan SERVO directo (debug) |
+| `v1.3` | HC-SR04 integrado con MEF no bloqueante sobre Timer2 libre; IR0 = detector de caja, IR1/IR2 = pateadores |
 
 ---
 

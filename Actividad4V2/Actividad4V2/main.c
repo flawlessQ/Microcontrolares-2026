@@ -5,9 +5,10 @@
 #include "TIMERS.h"
 #include "SERVO.h"
 #include "IR.h"
+#include "HCSR04.h"
 
 // ===========================================================================
-// PINES (solo los que ningun modulo inicializa)
+// PINES
 // ===========================================================================
 
 #define LED_BUILTIN  PINB5
@@ -17,24 +18,140 @@
 #define SERVO_HOLD_MS 500
 
 // ===========================================================================
+// MEF HCSR04 — estados
+// ===========================================================================
+
+typedef enum {
+    HCSR04_SM_IDLE = 0,
+    HCSR04_SM_TRIGGER_HIGH,
+    HCSR04_SM_WAIT_ECHO_HIGH,
+    HCSR04_SM_ECHO_HIGH,
+    HCSR04_SM_READY,
+    HCSR04_SM_TIMEOUT
+} HCSR04_SM_State_t;
+
+// Timer2 Normal, prescaler 64 -> 1 tick = 4us
+#define HCSR04_T2_TICK_US       4UL
+#define HCSR04_TRIGGER_TICKS    3UL       // 3 x 4us = 12us >= 10us minimo
+#define HCSR04_TIMEOUT_TICKS    10000UL   // 10000 x 4us = 40ms timeout
+
+// ===========================================================================
 // VARIABLES
 // ===========================================================================
 
-uint8_t  time100ms       = 100;
+uint8_t  time100ms          = 100;
 static uint16_t servo_hold[3]   = {0, 0, 0};
 static uint8_t  servo_active[3] = {0, 0, 0};
+
+static _sHCSR04_t         sensor;
+static HCSR04_SM_State_t  hcsr04_state        = HCSR04_SM_IDLE;
+static uint32_t           timer2_overflows     = 0;
+static uint32_t           hcsr04_trigger_start = 0;
+static uint32_t           hcsr04_wait_start    = 0;
+static uint32_t           hcsr04_echo_start    = 0;
+static uint32_t           hcsr04_echo_result_us = 0;
+
+static uint16_t           distancia_cm         = 0;
+
+// ===========================================================================
+// TIMER2 — contador libre extendido (4us/tick)
+// ===========================================================================
+
+static void TIMER2_UpdateOverflow(void) {
+    if (TIFR2 & (1 << TOV2)) {
+        TIFR2 |= (1 << TOV2);
+        timer2_overflows++;
+    }
+}
+
+static uint32_t TIMER2_GetTicks(void) {
+    TIMER2_UpdateOverflow();
+    return ((uint32_t)timer2_overflows << 8) + TCNT2;
+}
+
+static uint32_t TIMER2_GetElapsedTicks(uint32_t start_ticks) {
+    return TIMER2_GetTicks() - start_ticks;
+}
+
+// ===========================================================================
+// MEF HCSR04 — avanza un paso sin bloquear
+// ===========================================================================
+
+static void HCSR04_Task(void) {
+    switch (hcsr04_state) {
+
+        case HCSR04_SM_IDLE:
+        case HCSR04_SM_READY:
+        case HCSR04_SM_TIMEOUT:
+            break;
+
+        case HCSR04_SM_TRIGGER_HIGH:
+            if (TIMER2_GetElapsedTicks(hcsr04_trigger_start) >= HCSR04_TRIGGER_TICKS) {
+                PORTB &= ~(1 << TRIG_PIN);
+                hcsr04_wait_start = TIMER2_GetTicks();
+                hcsr04_state = HCSR04_SM_WAIT_ECHO_HIGH;
+            }
+            break;
+
+        case HCSR04_SM_WAIT_ECHO_HIGH:
+            if (PINB & (1 << ECHO_PIN)) {
+                hcsr04_echo_start = TIMER2_GetTicks();
+                hcsr04_state = HCSR04_SM_ECHO_HIGH;
+            } else if (TIMER2_GetElapsedTicks(hcsr04_wait_start) >= HCSR04_TIMEOUT_TICKS) {
+                PORTB &= ~(1 << TRIG_PIN);
+                hcsr04_state = HCSR04_SM_TIMEOUT;
+            }
+            break;
+
+        case HCSR04_SM_ECHO_HIGH:
+            if (!(PINB & (1 << ECHO_PIN))) {
+                hcsr04_echo_result_us =
+                    TIMER2_GetElapsedTicks(hcsr04_echo_start) * HCSR04_T2_TICK_US;
+                hcsr04_state = HCSR04_SM_READY;
+            } else if (TIMER2_GetElapsedTicks(hcsr04_echo_start) >= HCSR04_TIMEOUT_TICKS) {
+                hcsr04_state = HCSR04_SM_TIMEOUT;
+            }
+            break;
+    }
+}
+
+// ===========================================================================
+// CALLBACKS HCSR04 (llamados por HCSR04_MeasureCm)
+// ===========================================================================
+
+static void MyTrigger(void *context) {
+    (void)context;
+    if (hcsr04_state != HCSR04_SM_IDLE) return;
+    hcsr04_echo_result_us = 0;
+    hcsr04_trigger_start  = TIMER2_GetTicks();
+    PORTB |= (1 << TRIG_PIN);
+    hcsr04_state = HCSR04_SM_TRIGGER_HIGH;
+}
+
+static uint8_t MyReadEcho(void *context, uint32_t *echo_us) {
+    (void)context;
+    if (!echo_us) return 0;
+    if (hcsr04_state == HCSR04_SM_READY) {
+        *echo_us     = hcsr04_echo_result_us;
+        hcsr04_state = HCSR04_SM_IDLE;
+        return 1;
+    }
+    if (hcsr04_state == HCSR04_SM_TIMEOUT) {
+        hcsr04_state = HCSR04_SM_IDLE;
+        return 0;
+    }
+    return 0;
+}
 
 // ===========================================================================
 // GPIOs
 // ===========================================================================
 
-static void ini_GPIOs(void){
-    // LED heartbeat
+static void ini_GPIOs(void) {
     DDRB |= (1 << LED_BUILTIN);
-
-    // HC-SR04: TRIG salida, ECHO entrada sin pull-up
     DDRB |=  (1 << TRIG_PIN);
     DDRB &= ~(1 << ECHO_PIN);
+    PORTB &= ~(1 << TRIG_PIN);
     PORTB &= ~(1 << ECHO_PIN);
 }
 
@@ -42,15 +159,15 @@ static void ini_GPIOs(void){
 // ON1MS
 // ===========================================================================
 
-static void On1ms(void){
-    if(!time100ms) time100ms = 100;
+static void On1ms(void) {
+    if (!time100ms) time100ms = 100;
     time100ms--;
 
     IR_Update();
 
-    for(uint8_t i = 0; i < 3; i++){
-        if(servo_active[i]){
-            if(servo_hold[i] > 0){
+    for (uint8_t i = 0; i < 3; i++) {
+        if (servo_active[i]) {
+            if (servo_hold[i] > 0) {
                 servo_hold[i]--;
             } else {
                 servo_active[i] = 0;
@@ -66,18 +183,18 @@ static void On1ms(void){
 // HEARTBEAT
 // ===========================================================================
 
-void Heartbeat(){
-    if(!time100ms){
+void Heartbeat(void) {
+    if (!time100ms) {
         time100ms = 100;
         PORTB ^= (1 << LED_BUILTIN);
     }
 }
 
 // ===========================================================================
-// ISR TIMER0 - tick 1ms
+// ISR TIMER0 — tick 1ms
 // ===========================================================================
 
-ISR(TIMER0_COMPA_vect){
+ISR(TIMER0_COMPA_vect) {
     OCR0A += 249;
     GPIOR0 |= (1 << GPIOR00);
 }
@@ -86,41 +203,64 @@ ISR(TIMER0_COMPA_vect){
 // MAIN
 // ===========================================================================
 
-int main(void){
+int main(void) {
     cli();
 
     ini_TIMER0();
     ini_TIMER1();
+    ini_TIMER2();
     ini_GPIOs();
     SERVO_Init();
     IR_Init();
+    HCSR04_Init(&sensor, MyTrigger, MyReadEcho, 0);
 
     sei();
 
-    while(1){
+    while (1) {
 
         Heartbeat();
 
-        if(GPIOR0 & (1 << GPIOR00)){
-	        	On1ms();
+        HCSR04_Task();
+
+        if (GPIOR0 & (1 << GPIOR00)) {
+            On1ms();
         }
 
-        if(IR_FallingEdge(IR0) && !servo_active[0]){
+        HCSR04_Task();
+
+        // IR0: llegó una caja → disparar medición
+        if (IR_FallingEdge(IR0) && hcsr04_state == HCSR04_SM_IDLE) {
+            HCSR04_MeasureCm(&sensor, &distancia_cm);
+        }
+
+        HCSR04_Task();
+
+        // HCSR04 lista → leer resultado
+        if (hcsr04_state == HCSR04_SM_READY) {
+            HCSR04_MeasureCm(&sensor, &distancia_cm);
+        }
+
+        HCSR04_Task();
+
+        // HCSR04 timeout → liberar sensor
+        if (hcsr04_state == HCSR04_SM_TIMEOUT) {
+            HCSR04_MeasureCm(&sensor, &distancia_cm);
+        }
+
+        HCSR04_Task();
+
+        // IR1: pateador 1
+        if (IR_FallingEdge(IR1) && !servo_active[0]) {
             servo_active[0] = 1;
             servo_hold[0]   = SERVO_HOLD_MS;
             SERVO_Set(SERVO_1, SERVO_PUSH);
         }
 
-        if(IR_FallingEdge(IR1) && !servo_active[1]){
+        // IR2: pateador 2
+        if (IR_FallingEdge(IR2) && !servo_active[1]) {
             servo_active[1] = 1;
             servo_hold[1]   = SERVO_HOLD_MS;
             SERVO_Set(SERVO_2, SERVO_PUSH);
-        }
-
-        if(IR_FallingEdge(IR2) && !servo_active[2]){
-            servo_active[2] = 1;
-            servo_hold[2]   = SERVO_HOLD_MS;
-            SERVO_Set(SERVO_3, SERVO_PUSH);
         }
     }
 }

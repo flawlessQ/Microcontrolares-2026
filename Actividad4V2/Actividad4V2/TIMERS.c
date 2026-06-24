@@ -41,13 +41,11 @@ void ini_TIMER1 (){
 
 void ini_TIMER2 (){
 	TCNT2 = 0;
-	
-	TCCR2A = 0;
+
+	TCCR2A = 0;		// Modo Normal: WGM21=0, WGM20=0
 	TCCR2B = 0;
-	
-	TCCR2A |= (1 << WGM21);
-	
-	TCCR2B |= (1 << CS21);
-	
-	OCR2A = 1;
+
+	TIFR2 |= (1 << TOV2);		// Limpio bandera overflow pendiente
+
+	TCCR2B |= (1 << CS22);		// Prescaler 64 -> 1 tick = 4us
 }
