@@ -9,6 +9,7 @@
 #include "COMUNICATION.h"
 #include "CLASSIFIER.h"
 #include "IRTARGET.h"
+#include "CONVEYOR.h"
 
 // ===========================================================================
 // PINES
@@ -22,6 +23,14 @@
 // ===========================================================================
 // MEF HCSR04
 // ===========================================================================
+
+// Delay entre deteccion IR y disparo de servo (caja aun en transito)
+#define SERVO_FIRE_DELAY_MS    150
+
+// Multi-muestra: recolecta medidas mientras IR0 este activo y promedia
+#define MAX_MEAS_SAMPLES    8
+#define MEAS_RETRY_WAIT_MS  60    // ms entre disparos del HCSR04
+#define IR0_IS_LOW()        ((PIND & (1 << PD5)) == 0)
 
 typedef enum {
     HCSR04_SM_IDLE = 0,
@@ -43,8 +52,16 @@ typedef enum {
 static uint8_t              time100ms            = 100;
 static uint16_t             servo_hold[3]        = {0,0,0};
 static uint8_t              servo_active[3]      = {0,0,0};
+static uint8_t              fire_pending[3]      = {0,0,0};
+static uint16_t             fire_delay[3]        = {0,0,0};
 static uint16_t             cnt[4]               = {0,0,0,0};  // BOX_SMALL/MEDIUM/BIG/NONE
 static _sClassifierConfig   classifier_cfg       = {6, 8, 10, 20};
+
+typedef enum { CMEAS_IDLE=0, CMEAS_COLLECTING } CMeasState_t;
+static CMeasState_t cmeas_state  = CMEAS_IDLE;
+static uint8_t      meas_buf[MAX_MEAS_SAMPLES];
+static uint8_t      meas_count   = 0;
+static uint16_t     meas_wait_ms = 0;
 
 static _sHCSR04_t           sensor;
 static HCSR04_SM_State_t    hcsr04_state         = HCSR04_SM_IDLE;
@@ -144,59 +161,81 @@ static uint8_t MyReadEcho(void *context, uint32_t *echo_us) {
 
 static void CLASSIFY_Task(void) {
 
-    // IR0: caja detectada → disparar medición
-    if (IR_FallingEdge(IR0) && hcsr04_state == HCSR04_SM_IDLE) {
-        HCSR04_MeasureCm(&sensor, &distancia_cm);
+    /* --- MEF multi-muestra: recolecta medidas mientras IR0 este activo --- */
+    switch(cmeas_state) {
+
+        case CMEAS_IDLE:
+            if (IR_FallingEdge(IR0)) {
+                meas_count   = 0;
+                meas_wait_ms = 0;
+                cmeas_state  = CMEAS_COLLECTING;
+            }
+            break;
+
+        case CMEAS_COLLECTING:
+            // Disparar nueva medicion si sensor libre, wait expirado, IR0 aun LOW y hay espacio
+            if (hcsr04_state == HCSR04_SM_IDLE && meas_wait_ms == 0
+                && meas_count < MAX_MEAS_SAMPLES && IR0_IS_LOW()) {
+                HCSR04_MeasureCm(&sensor, &distancia_cm);
+            }
+            // Almacenar resultado valido
+            if (hcsr04_state == HCSR04_SM_READY) {
+                if (HCSR04_MeasureCm(&sensor, &distancia_cm) == HCSR04_OK) {
+                    meas_buf[meas_count++] = (uint8_t)distancia_cm;
+                }
+                meas_wait_ms = MEAS_RETRY_WAIT_MS;
+            }
+            // Timeout: descartar muestra, esperar antes de reintentar
+            if (hcsr04_state == HCSR04_SM_TIMEOUT) {
+                HCSR04_MeasureCm(&sensor, &distancia_cm);
+                meas_wait_ms = MEAS_RETRY_WAIT_MS;
+            }
+            // Finalizar cuando IR0 volvio a HIGH y el sensor esta libre, o buffer lleno
+            if ((!IR0_IS_LOW() && hcsr04_state == HCSR04_SM_IDLE)
+                || meas_count >= MAX_MEAS_SAMPLES) {
+                if (meas_count > 0) {
+                    uint16_t sum = 0;
+                    uint8_t  j;
+                    for(j = 0; j < meas_count; j++) sum += meas_buf[j];
+                    uint8_t d_avg = (uint8_t)(sum / meas_count);
+                    COM_SendFrame(CMD_DIST_MEAS, &d_avg, 1);
+                    _eBoxType tipo = CLASSIFIER_Classify(d_avg);
+                    IRTARGET_RegisterBox(tipo);
+                    // cnt[] NO se incrementa aqui: se suma cuando el servo patea
+                } else {
+                    COM_SendFrame(CMD_ERR_SENSOR, 0, 0);  // todas las medidas fallaron
+                }
+                cmeas_state = CMEAS_IDLE;
+            }
+            break;
     }
 
-    // HCSR04 listo → clasificar y registrar en IRTarget
-    if (hcsr04_state == HCSR04_SM_READY) {
-        if (HCSR04_MeasureCm(&sensor, &distancia_cm) == HCSR04_OK) {
-            uint8_t d = (distancia_cm > 255) ? 255 : (uint8_t)distancia_cm;
-            COM_SendFrame(CMD_DIST_MEAS, &d, 1);
-            _eBoxType tipo = CLASSIFIER_Classify(d);
-            IRTARGET_RegisterBox(tipo);
-            cnt[(uint8_t)tipo]++;
-        }
-    }
+    /* --- Delay 150ms antes de disparar el servo --- */
 
-    // HCSR04 timeout → liberar y notificar
-    if (hcsr04_state == HCSR04_SM_TIMEOUT) {
-        HCSR04_MeasureCm(&sensor, &distancia_cm);
-        COM_SendFrame(CMD_ERR_SENSOR, 0, 0);
-    }
-
-    // Pateador 1: IR1 → ¿le toca a esta caja?
-    if (IR_FallingEdge(IR1) && !servo_active[0]) {
-        if (IRTARGET_Tick(PUSHER_1)) {
-            servo_active[0] = 1;
-            servo_hold[0]   = SERVO_HOLD_MS;
-            SERVO_Set(SERVO_1, SERVO_PUSH);
-            uint8_t ep = (uint8_t)BOX_SMALL;
+    // Disparos pendientes: si el delay expiro, ejecutar y sumar contador
+    for (uint8_t i = 0; i < 3; i++) {
+        if (fire_pending[i] && fire_delay[i] == 0 && !servo_active[i]) {
+            fire_pending[i] = 0;
+            servo_active[i] = 1;
+            servo_hold[i]   = SERVO_HOLD_MS;
+            SERVO_Set((_eServoID)i, SERVO_PUSH);
+            uint8_t ep;
+            if      (i == 0) { ep = (uint8_t)BOX_SMALL;  cnt[BOX_SMALL]++;  }
+            else if (i == 1) { ep = (uint8_t)BOX_MEDIUM; cnt[BOX_MEDIUM]++; }
+            else             { ep = (uint8_t)BOX_BIG;    cnt[BOX_BIG]++;    }
             COM_SendFrame(CMD_BOX_EJECTED, &ep, 1);
         }
     }
 
-    // Pateador 2: IR2 → ¿le toca a esta caja?
-    if (IR_FallingEdge(IR2) && !servo_active[1]) {
-        if (IRTARGET_Tick(PUSHER_2)) {
-            servo_active[1] = 1;
-            servo_hold[1]   = SERVO_HOLD_MS;
-            SERVO_Set(SERVO_2, SERVO_PUSH);
-            uint8_t ep = (uint8_t)BOX_MEDIUM;
-            COM_SendFrame(CMD_BOX_EJECTED, &ep, 1);
-        }
+    // IR pateadores → registrar disparo con delay
+    if (IR_FallingEdge(IR1) && !servo_active[0] && !fire_pending[0]) {
+        if (IRTARGET_Tick(PUSHER_1)) { fire_pending[0]=1; fire_delay[0]=SERVO_FIRE_DELAY_MS; }
     }
-
-    // Pateador 3: IR3 → ¿le toca a esta caja?
-    if (IR_FallingEdge(IR3) && !servo_active[2]) {
-        if (IRTARGET_Tick(PUSHER_3)) {
-            servo_active[2] = 1;
-            servo_hold[2]   = SERVO_HOLD_MS;
-            SERVO_Set(SERVO_3, SERVO_PUSH);
-            uint8_t ep = (uint8_t)BOX_BIG;
-            COM_SendFrame(CMD_BOX_EJECTED, &ep, 1);
-        }
+    if (IR_FallingEdge(IR2) && !servo_active[1] && !fire_pending[1]) {
+        if (IRTARGET_Tick(PUSHER_2)) { fire_pending[1]=1; fire_delay[1]=SERVO_FIRE_DELAY_MS; }
+    }
+    if (IR_FallingEdge(IR3) && !servo_active[2] && !fire_pending[2]) {
+        if (IRTARGET_Tick(PUSHER_3)) { fire_pending[2]=1; fire_delay[2]=SERVO_FIRE_DELAY_MS; }
     }
 }
 
@@ -251,6 +290,13 @@ static void ProcessCmd(uint8_t cmd, uint8_t *payload) {
             COM_SendFrame(CMD_ACK, ack, 2);
             break;
 
+        case CMD_SET_CONVEYOR:
+            if(payload[0]) CONVEYOR_Start();
+            else           CONVEYOR_Stop();
+            ack[0]=cmd; ack[1]=ACK_OK;
+            COM_SendFrame(CMD_ACK, ack, 2);
+            break;
+
         case CMD_SET_SERVO:
             SERVO_SetConfig((_eServoID)payload[0], payload[1], payload[2]);
             ack[0]=cmd; ack[1]=ACK_OK;
@@ -295,7 +341,10 @@ static void On1ms(void) {
 
     IR_Update();
 
+    if (meas_wait_ms > 0) meas_wait_ms--;
+
     for (uint8_t i = 0; i < 3; i++) {
+        if (fire_delay[i] > 0) fire_delay[i]--;
         if (servo_active[i]) {
             if (servo_hold[i] > 0) { servo_hold[i]--; }
             else { servo_active[i] = 0; SERVO_Set((_eServoID)i, SERVO_HOME); }
@@ -339,6 +388,9 @@ int main(void) {
     CLASSIFIER_Init();
     IRTARGET_Init();
     COM_Init();
+	CONVEYOR_Init();
+	
+	CONVEYOR_Start();
 
     sei();
 

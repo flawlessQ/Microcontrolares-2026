@@ -12,13 +12,19 @@
 
 #include "COMUNICATION.h"
 
-static uint8_t rx_buf[RX_BUFFER_SIZE];
-static uint8_t rx_head;
-static uint8_t rx_tail;
+#define TX_BUFFER_SIZE  64
+
+static uint8_t          rx_buf[RX_BUFFER_SIZE];
+static volatile uint8_t rx_head;
+static volatile uint8_t rx_tail;
+
+static uint8_t          tx_buf[TX_BUFFER_SIZE];
+static volatile uint8_t tx_head;
+static volatile uint8_t tx_tail;
 
 void COM_Init(){
-    rx_head = 0;
-    rx_tail = 0;
+    rx_head = rx_tail = 0;
+    tx_head = tx_tail = 0;
 
     // Baud rate con double-speed (U2X0=1 → UBRR=16 → 117647 baud, error 2.1%)
     UCSR0A = (1 << U2X0);
@@ -40,9 +46,23 @@ ISR(USART_RX_vect){
     }
 }
 
+// Agrega byte al ring buffer TX y activa la interrupcion UDRE para drenarlo.
+// No bloqueante salvo que el buffer este lleno (64 bytes, muy poco probable).
 static void COM_SendByte(uint8_t b){
-    while(!(UCSR0A & (1 << UDRE0)));
-    UDR0 = b;
+    uint8_t next = (tx_head + 1) % TX_BUFFER_SIZE;
+    while(next == tx_tail);     // solo bloquea si buffer lleno (64B)
+    tx_buf[tx_head] = b;
+    tx_head = next;
+    UCSR0B |= (1 << UDRIE0);   // habilitar ISR UDRE para drenar
+}
+
+ISR(USART_UDRE_vect){
+    if(tx_head != tx_tail){
+        UDR0 = tx_buf[tx_tail];
+        tx_tail = (tx_tail + 1) % TX_BUFFER_SIZE;
+    } else {
+        UCSR0B &= ~(1 << UDRIE0);  // buffer vacio, deshabilitar
+    }
 }
 
 // Trama UNER: U N E R | LENGTH | ':' | CMD | PAYLOAD... | CHECKSUM

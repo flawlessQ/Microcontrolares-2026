@@ -16,12 +16,12 @@ void CONVEYOR_Init(){
 }
 
 void CONVEYOR_Start(){
-    PORTC  |= (1 << CONVEYOR_PIN);
+	PORTC  &= ~(1 << CONVEYOR_PIN);
     running  = 1;
 }
 
 void CONVEYOR_Stop(){
-    PORTC  &= ~(1 << CONVEYOR_PIN);
+    PORTC  |= (1 << CONVEYOR_PIN);
     running  = 0;
 }
 
