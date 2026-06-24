@@ -15,6 +15,7 @@
 // Comandos Firmware -> GUI
 #define CMD_ERR_SENSOR      0xA0
 #define CMD_DIST_MEAS       0xA1
+#define CMD_BOX_CLASSIF     0xA2
 #define CMD_BOX_EJECTED     0xA3
 #define CMD_STATE           0xA4
 #define CMD_COUNTS          0xA5

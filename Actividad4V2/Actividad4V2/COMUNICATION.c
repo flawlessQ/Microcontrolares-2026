@@ -44,24 +44,27 @@ static void COM_SendByte(uint8_t b){
 }
 
 // Trama UNER: U N E R | LENGTH | ':' | CMD | PAYLOAD... | CHECKSUM
+// LENGTH = CMD(1) + payload(n) + CHECKSUM(1) = n+2  (igual que Qt buildFrame)
+// CHECKSUM = XOR acumulado desde 'U' hasta ultimo byte de payload
 void COM_SendFrame(uint8_t cmd, uint8_t *payload, uint8_t len){
     uint8_t i;
-    uint8_t checksum = cmd;
+    uint8_t chk = 0;
+    uint8_t length = len + 2;
 
-    COM_SendByte('U');
-    COM_SendByte('N');
-    COM_SendByte('E');
-    COM_SendByte('R');
-    COM_SendByte(len + 1);   // LENGTH = CMD + payload
-    COM_SendByte(':');
-    COM_SendByte(cmd);
+    chk ^= 'U'; COM_SendByte('U');
+    chk ^= 'N'; COM_SendByte('N');
+    chk ^= 'E'; COM_SendByte('E');
+    chk ^= 'R'; COM_SendByte('R');
+    chk ^= length; COM_SendByte(length);
+    chk ^= ':'; COM_SendByte(':');
+    chk ^= cmd; COM_SendByte(cmd);
 
     for(i = 0; i < len; i++){
-        checksum ^= payload[i];
+        chk ^= payload[i];
         COM_SendByte(payload[i]);
     }
 
-    COM_SendByte(checksum);
+    COM_SendByte(chk);
 }
 
 static uint8_t COM_RxAvailable(){
@@ -105,26 +108,40 @@ static uint8_t frame_len;
 // COM_Update: llamar en cada iteracion del loop principal.
 // Procesa todos los bytes disponibles en el buffer RX y reconstruye tramas UNER.
 // Cuando la trama es valida (checksum OK), la almacena y activa el flag frame_ready.
+// COM_Update: checksum acumulado desde 'U' hasta ultimo payload, igual que Qt.
+// LENGTH de Qt: CMD(1) + payload(n) + CHECKSUM(1) = n+2 → payload bytes = LENGTH-2
 void COM_Update(){
     while(COM_RxAvailable()){
         uint8_t b = COM_RxRead();
         switch(ps_state){
-            case PS_IDLE:   ps_state = (b=='U') ? PS_U     : PS_IDLE; break;
-            case PS_U:      ps_state = (b=='N') ? PS_N     : PS_IDLE; break;
-            case PS_N:      ps_state = (b=='E') ? PS_E     : PS_IDLE; break;
-            case PS_E:      ps_state = (b=='R') ? PS_R     : PS_IDLE; break;
-            case PS_R:      ps_len=b; ps_state=PS_LEN;                break;
-            case PS_LEN:    ps_state = (b==':') ? PS_COLON : PS_IDLE; break;
+            case PS_IDLE:
+                if(b=='U'){ ps_chk='U'; ps_state=PS_U; }
+                break;
+            case PS_U:
+                if(b=='N'){ ps_chk^='N'; ps_state=PS_N; } else ps_state=PS_IDLE;
+                break;
+            case PS_N:
+                if(b=='E'){ ps_chk^='E'; ps_state=PS_E; } else ps_state=PS_IDLE;
+                break;
+            case PS_E:
+                if(b=='R'){ ps_chk^='R'; ps_state=PS_R; } else ps_state=PS_IDLE;
+                break;
+            case PS_R:
+                ps_len=b; ps_chk^=b; ps_state=PS_LEN;
+                break;
+            case PS_LEN:
+                if(b==':'){ ps_chk^=b; ps_state=PS_COLON; } else ps_state=PS_IDLE;
+                break;
             case PS_COLON:
-                ps_cmd=b; ps_chk=b; ps_idx=0;
-                ps_state = (ps_len > 1) ? PS_PAYLOAD : PS_CHKSUM;
+                ps_cmd=b; ps_chk^=b; ps_idx=0;
+                ps_state = (ps_len > 2) ? PS_PAYLOAD : PS_CHKSUM;
                 break;
             case PS_PAYLOAD:
                 if(ps_idx < COM_PAYLOAD_SIZE) ps_payload[ps_idx] = b;
                 ps_chk ^= b;
-                if(++ps_idx >= ps_len - 1) ps_state = PS_CHKSUM;
+                if(++ps_idx >= ps_len - 2) ps_state = PS_CHKSUM;
                 break;
-            case PS_CHKSUM:
+            case PS_CHKSUM:{
                 if(b == ps_chk){
                     frame_cmd = ps_cmd;
                     frame_len = ps_idx;
@@ -134,6 +151,7 @@ void COM_Update(){
                 }
                 ps_state = PS_IDLE;
                 break;
+            }
             default: ps_state = PS_IDLE; break;
         }
     }

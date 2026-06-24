@@ -6,6 +6,7 @@
 #include "SERVO.h"
 #include "IR.h"
 #include "HCSR04.h"
+#include "COMUNICATION.h"
 
 // ===========================================================================
 // PINES
@@ -52,6 +53,43 @@ static uint32_t           hcsr04_echo_start    = 0;
 static uint32_t           hcsr04_echo_result_us = 0;
 
 static uint16_t           distancia_cm         = 0;
+
+// ===========================================================================
+// PROCESADOR DE COMANDOS UART
+// ===========================================================================
+
+static void ProcessCmd(uint8_t cmd, uint8_t *payload){
+    uint8_t ack[2];
+
+    switch(cmd){
+
+        case CMD_GET_STATE:{
+            uint8_t st = 0;
+            if     (servo_active[0]) st = 1;
+            else if(servo_active[1]) st = 2;
+            else if(servo_active[2]) st = 3;
+            COM_SendFrame(CMD_STATE, &st, 1);
+            break;
+        }
+
+        case CMD_GET_COUNTS:{
+            uint8_t p[8] = {0,0, 0,0, 0,0, 0,0};
+            COM_SendFrame(CMD_COUNTS, p, 8);
+            break;
+        }
+
+        case CMD_SET_SERVO:
+            SERVO_SetConfig((_eServoID)payload[0], payload[1], payload[2]);
+            ack[0]=cmd; ack[1]=ACK_OK;
+            COM_SendFrame(CMD_ACK, ack, 2);
+            break;
+
+        default:
+            ack[0]=cmd; ack[1]=ACK_OK;
+            COM_SendFrame(CMD_ACK, ack, 2);
+            break;
+    }
+}
 
 // ===========================================================================
 // TIMER2 — contador libre extendido (4us/tick)
@@ -213,6 +251,7 @@ int main(void) {
     SERVO_Init();
     IR_Init();
     HCSR04_Init(&sensor, MyTrigger, MyReadEcho, 0);
+    COM_Init();
 
     sei();
 
@@ -235,16 +274,20 @@ int main(void) {
 
         HCSR04_Task();
 
-        // HCSR04 lista → leer resultado
+        // HCSR04 lista → leer resultado y enviar a GUI
         if (hcsr04_state == HCSR04_SM_READY) {
-            HCSR04_MeasureCm(&sensor, &distancia_cm);
+            if(HCSR04_MeasureCm(&sensor, &distancia_cm) == HCSR04_OK){
+                uint8_t d = (distancia_cm > 255) ? 255 : (uint8_t)distancia_cm;
+                COM_SendFrame(CMD_DIST_MEAS, &d, 1);
+            }
         }
 
         HCSR04_Task();
 
-        // HCSR04 timeout → liberar sensor
+        // HCSR04 timeout → liberar sensor y avisar a GUI
         if (hcsr04_state == HCSR04_SM_TIMEOUT) {
             HCSR04_MeasureCm(&sensor, &distancia_cm);
+            COM_SendFrame(CMD_ERR_SENSOR, 0, 0);
         }
 
         HCSR04_Task();
@@ -261,6 +304,14 @@ int main(void) {
             servo_active[1] = 1;
             servo_hold[1]   = SERVO_HOLD_MS;
             SERVO_Set(SERVO_2, SERVO_PUSH);
+        }
+
+        // UART: procesar bytes recibidos de la GUI
+        COM_Update();
+        if(COM_FrameAvailable()){
+            uint8_t cmd, payload[COM_PAYLOAD_SIZE], len;
+            COM_GetFrame(&cmd, payload, &len);
+            ProcessCmd(cmd, payload);
         }
     }
 }

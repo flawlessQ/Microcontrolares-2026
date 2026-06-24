@@ -276,6 +276,7 @@ Desarrollada en Qt 6. Toda la interfaz se construye por código en `buildUI()`.
 | `v1.1` | MEF sonar no bloqueante con Timer1 prestado |
 | `v1.2` | Reescritura completa: heartbeat corregido (`OCR0A+=249`), IR0/1/2 activan SERVO directo (debug) |
 | `v1.3` | HC-SR04 integrado con MEF no bloqueante sobre Timer2 libre; IR0 = detector de caja, IR1/IR2 = pateadores |
+| `v1.4` | UART integrado: protocolo UNER corregido para coincidir con PruebaQt (LENGTH y checksum); envía CMD_DIST_MEAS y CMD_ERR_SENSOR; responde CMD_GET_STATE, CMD_GET_COUNTS, CMD_SET_SERVO |
 
 ---
 
