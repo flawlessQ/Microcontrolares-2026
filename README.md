@@ -277,6 +277,8 @@ Desarrollada en Qt 6. Toda la interfaz se construye por código en `buildUI()`.
 | `v1.2` | Reescritura completa: heartbeat corregido (`OCR0A+=249`), IR0/1/2 activan SERVO directo (debug) |
 | `v1.3` | HC-SR04 integrado con MEF no bloqueante sobre Timer2 libre; IR0 = detector de caja, IR1/IR2 = pateadores |
 | `v1.4` | UART integrado: protocolo UNER corregido para coincidir con PruebaQt (LENGTH y checksum); envía CMD_DIST_MEAS y CMD_ERR_SENSOR; responde CMD_GET_STATE, CMD_GET_COUNTS, CMD_SET_SERVO |
+| `v1.4.1` | Fix UART baud rate: U2X0=1 + UBRR=16 → 117647 baud (error 2.1%). Sin U2X: UBRR=7 → 125000 baud (error 8.5%) → comunicacion fallida |
+| `v1.5` | Clasificacion Modo Normal: CLASSIFY_Task() integra CLASSIFIER + IRTARGET; while(1) limpio con 4 tareas; COM_Task() y ProcessCmd completo (SET_THRESH, SET_CALIB, RESET_COUNTS, BOX_EJECTED) |
 
 ---
 
